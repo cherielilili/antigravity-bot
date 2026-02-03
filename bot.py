@@ -28,10 +28,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🚀 *Antigravity Assistant 已启动*\n\n"
         "可用命令：\n"
-        "/状态 TICKER - 查看标的状态\n"
-        "/简报 - 今日简报\n"
-        "/本周 - 本周关注\n"
-        "/帮助 - 显示帮助\n\n"
+        "/status TICKER - 查看标的状态\n"
+        "/brief - 今日简报\n"
+        "/week - 本周关注\n"
+        "/help - 显示帮助\n\n"
         "或直接发送消息，我会理解你的意图。",
         parse_mode='Markdown'
     )
@@ -40,26 +40,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """处理 /帮助 命令"""
+    """处理 /help 命令"""
     help_text = """
 📋 *命令列表*
 
 *查询类:*
-/状态 TICKER - 查看标的当前状态
-/简报 - 今日未读简报
-/本周 - 本周关注重点
-/持仓 - 当前持仓状态
+/status TICKER - 查看标的当前状态
+/brief - 今日未读简报
+/week - 本周关注重点
+/position - 当前持仓状态
 
 *执行类:*
-/研究 TICKER - 触发深度研究
-/预览 TICKER - 生成财报预览
-/追踪 TICKER - 生成追踪报告
+/research TICKER - 触发深度研究
+/preview TICKER - 生成财报预览
+/track TICKER - 生成追踪报告
 
 *记录类:*
-/想法 TICKER 内容 - 快速记录想法
+/idea TICKER 内容 - 快速记录想法
 
 *系统:*
-/帮助 - 显示此帮助
+/help - 显示此帮助
 /ping - 测试连接
     """
     await update.message.reply_text(help_text, parse_mode='Markdown')
@@ -75,9 +75,9 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """处理 /状态 命令"""
+    """处理 /status 命令"""
     if not context.args:
-        await update.message.reply_text("请指定标的，例如: /状态 SHOP")
+        await update.message.reply_text("请指定标的，例如: /status SHOP")
         return
 
     ticker = context.args[0].upper()
@@ -96,7 +96,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """处理 /简报 命令"""
+    """处理 /brief 命令"""
     await update.message.reply_text(
         "📧 *今日简报*\n\n"
         "_功能开发中，稍后将自动推送每日简报_",
@@ -104,8 +104,8 @@ async def brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def this_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """处理 /本周 命令"""
+async def week(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理 /week 命令"""
     await update.message.reply_text(
         "📅 *本周关注*\n\n"
         "_功能开发中..._",
@@ -113,10 +113,19 @@ async def this_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def position(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理 /position 命令"""
+    await update.message.reply_text(
+        "💼 *当前持仓*\n\n"
+        "_功能开发中..._",
+        parse_mode='Markdown'
+    )
+
+
 async def research(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """处理 /研究 命令"""
+    """处理 /research 命令"""
     if not context.args:
-        await update.message.reply_text("请指定标的，例如: /研究 SHOP")
+        await update.message.reply_text("请指定标的，例如: /research SHOP")
         return
 
     ticker = context.args[0].upper()
@@ -128,10 +137,38 @@ async def research(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # TODO: 触发研究流程
 
 
+async def preview(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理 /preview 命令"""
+    if not context.args:
+        await update.message.reply_text("请指定标的，例如: /preview AMZN")
+        return
+
+    ticker = context.args[0].upper()
+    await update.message.reply_text(
+        f"📈 生成 {ticker} 财报预览...\n"
+        f"_功能开发中..._",
+        parse_mode='Markdown'
+    )
+
+
+async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理 /track 命令"""
+    if not context.args:
+        await update.message.reply_text("请指定标的，例如: /track SHOP")
+        return
+
+    ticker = context.args[0].upper()
+    await update.message.reply_text(
+        f"📡 生成 {ticker} 追踪报告...\n"
+        f"_功能开发中..._",
+        parse_mode='Markdown'
+    )
+
+
 async def idea(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """处理 /想法 命令 - 快速记录"""
+    """处理 /idea 命令 - 快速记录"""
     if len(context.args) < 2:
-        await update.message.reply_text("格式: /想法 TICKER 你的想法内容")
+        await update.message.reply_text("格式: /idea TICKER 你的想法内容")
         return
 
     ticker = context.args[0].upper()
@@ -160,13 +197,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if word.isalpha() and 2 <= len(word) <= 5:
                 await update.message.reply_text(
                     f"你想查看 {word} 的状态吗？\n"
-                    f"请使用: /状态 {word}"
+                    f"请使用: /status {word}"
                 )
                 return
 
     await update.message.reply_text(
         "🤔 我还在学习理解更多指令...\n"
-        "目前请使用 /帮助 查看可用命令"
+        "目前请使用 /help 查看可用命令"
     )
 
 
@@ -195,7 +232,7 @@ async def send_daily_brief(context: ContextTypes.DEFAULT_TYPE):
 • _功能开发中_
 
 ━━━━━━━━━━━━━━━━━━━━
-回复 /简报 查看详情
+回复 /brief 查看详情
     """
 
     await context.bot.send_message(
@@ -216,16 +253,18 @@ def main():
     # 创建 Application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # 注册命令处理器
+    # 注册命令处理器（只用英文命令）
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("帮助", help_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("ping", ping))
-    application.add_handler(CommandHandler("状态", status))
-    application.add_handler(CommandHandler("简报", brief))
-    application.add_handler(CommandHandler("本周", this_week))
-    application.add_handler(CommandHandler("研究", research))
-    application.add_handler(CommandHandler("想法", idea))
+    application.add_handler(CommandHandler("status", status))
+    application.add_handler(CommandHandler("brief", brief))
+    application.add_handler(CommandHandler("week", week))
+    application.add_handler(CommandHandler("position", position))
+    application.add_handler(CommandHandler("research", research))
+    application.add_handler(CommandHandler("preview", preview))
+    application.add_handler(CommandHandler("track", track))
+    application.add_handler(CommandHandler("idea", idea))
 
     # 注册消息处理器（处理非命令消息）
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
