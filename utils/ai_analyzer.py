@@ -417,32 +417,33 @@ def analyze_momentum_stocks(data: dict, include_descriptions: bool = True) -> st
     top_20 = all_tickers[:20]
     new_entries = data.get("new_entries", [])
 
-    ticker_list = ", ".join(top_20)
-
-    # 只取前20名中的新进入标的（带排名）
-    new_in_top20 = []
+    # 全部新进入标的，只有前20的才标排名
+    new_with_rank = []
     for t in new_entries:
         if t in top_20:
             rank = all_tickers.index(t) + 1
-            new_in_top20.append(f"{t}(#{rank})")
-    new_with_rank_str = ", ".join(new_in_top20) if new_in_top20 else "无"
+            new_with_rank.append(f"{t}(#{rank})")
+        else:
+            new_with_rank.append(t)
+    new_list_str = ", ".join(new_with_rank) if new_with_rank else "无"
 
     prompt = f"""分析 Momentum 50 榜单（直接输出，不要说"好的"）：
 
 日期: {data.get('latest_date', 'N/A')}
-Top 20: {ticker_list}
-Top 20中的新进入: {new_with_rank_str}
+全部50只标的（用于行业统计）: {', '.join(all_tickers)}
+新进入标的: {new_list_str}
 
 请输出：
 
 1. 行业分布：
-一句话统计 Top 20 的行业分布，如"科技股XX只(XX%)，医药XX只(XX%)..."
+一句话统计全部50只的行业分布，如"科技股XX只(XX%)，医药XX只(XX%)..."
 
 2. 新进标的点评：
-只点评 Top 20 中新进入的标的，格式：
-**TICKER**(#排名)：简介(10字内)。关注点。
+点评所有新进入的标的，格式：
+TICKER：简介(10字内)。关注点。
+TICKER(#排名)：简介(10字内)。关注点。（进入前20的标注排名）
 
-要求简洁，适合手机阅读。"""
+要求简洁，不要输出注意事项。"""
 
     # 尝试 AI 分析
     ai_result = analyze(prompt, prefer="gemini")
