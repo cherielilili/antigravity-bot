@@ -421,40 +421,34 @@ def analyze_momentum_stocks(data: dict, include_descriptions: bool = True) -> st
     new_list = ", ".join(new_entries[:10]) if new_entries else "无"
     dropped_list = ", ".join(dropped[:10]) if dropped else "无"
 
-    # 构建 Top 10 列表，标注哪些是新进入的
-    top_10_with_new = []
-    for t in tickers[:10]:
-        if t in new_entries:
-            top_10_with_new.append(f"**{t}**(新)")
+    # 构建新进入标的列表（带排名）
+    new_with_rank = []
+    for t in new_entries:
+        if t in tickers:
+            rank = tickers.index(t) + 1
+            new_with_rank.append(f"{t}(#{rank})")
         else:
-            top_10_with_new.append(t)
-    top_10_str = ", ".join(top_10_with_new)
+            new_with_rank.append(t)
+    new_with_rank_str = ", ".join(new_with_rank[:10])
 
-    prompt = f"""你是专业的美股动量交易分析师。请分析以下 Momentum 50 榜单：
+    prompt = f"""分析 Momentum 50 榜单（直接输出，不要说"好的"）：
 
 日期: {data.get('latest_date', 'N/A')}
-Top 10: {top_10_str}
-今日新进入: {new_list}
-今日掉出: {dropped_list}
+Top 10: {ticker_list}
+新进入 ({len(new_entries)}只): {new_with_rank_str}
 
-请提供（直接输出，不要说"好的"等开场白）：
+请输出：
 
-1. 榜单特征：
-哪些板块/主题占主导，1-2句话
+1. 行业分布：
+一句话统计榜单行业分布，如"科技股占XX只(XX%)，医药XX只(XX%)..."
 
-2. Top 10 标的点评（**新进标的加粗**）：
-对 Top 10 每个标的提供简介，新进入的用加粗格式，如：
-**TICKER**：公司简介。关注要点。
-TICKER：公司简介。关注要点。
+2. 新进标的点评：
+只点评新进入的标的，格式：
+**TICKER**(#排名)：简介(10字内)。关注点。
 
-3. 热点趋势判断
+3. 注意事项（1句话）
 
-4. 注意事项
-
-要求：
-- Top 10 每个都要有简介
-- 新进入的标的用 **加粗**
-- 回答简洁"""
+要求简洁，适合手机阅读。"""
 
     # 尝试 AI 分析
     ai_result = analyze(prompt, prefer="gemini")
