@@ -378,6 +378,8 @@ def format_market_monitor_telegram(data: dict, analysis: str, ob_link: str = Non
     down_4pct = latest.get("down_4pct", "N/A")
     ratio_5d = latest.get("ratio_5d", "N/A")
     ratio_10d = latest.get("ratio_10d", "N/A")
+    up_25pct_qtr = latest.get("up_25pct_qtr", "N/A")
+    down_25pct_qtr = latest.get("down_25pct_qtr", "N/A")
 
     # 判断市场情绪
     emoji = "📊"
@@ -391,8 +393,9 @@ def format_market_monitor_telegram(data: dict, analysis: str, ob_link: str = Non
 
     message = f"""{emoji} *Market Monitor {date_str}*
 
-📈 涨4%+: `{up_4pct}` | 📉 跌4%+: `{down_4pct}`
+📈 日涨4%+: `{up_4pct}` | 📉 日跌4%+: `{down_4pct}`
 📊 5日比: `{ratio_5d}` | 10日比: `{ratio_10d}`
+📅 季涨25%+: `{up_25pct_qtr}` | 季跌25%+: `{down_25pct_qtr}`
 
 *分析:*
 {analysis[:500]}
