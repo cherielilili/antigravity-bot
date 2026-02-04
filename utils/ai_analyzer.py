@@ -441,7 +441,83 @@ def analyze_momentum_stocks(data: dict, include_descriptions: bool = True) -> st
 
 直接输出分析，不要加开场白。"""
 
-    return analyze(prompt, prefer="gemini")
+    # 尝试 AI 分析
+    ai_result = analyze(prompt, prefer="gemini")
+
+    # 如果 AI 成功，返回结果
+    if ai_result:
+        return ai_result
+
+    # AI 失败，使用规则分析
+    logger.info("AI 不可用，使用规则分析 Momentum 50")
+    return rule_based_momentum_analysis(data)
+
+
+def rule_based_momentum_analysis(data: dict) -> str:
+    """
+    基于规则的 Momentum 50 分析（AI 不可用时的备用方案）
+
+    Args:
+        data: Momentum 50 数据
+
+    Returns:
+        str: 规则分析结果
+    """
+    analysis_parts = []
+
+    tickers = data.get("tickers", [])
+    new_entries = data.get("new_entries", [])
+    dropped = data.get("dropped", [])
+    latest_date = data.get("latest_date", "N/A")
+
+    # 1. 基本信息
+    analysis_parts.append(f"📅 榜单日期: {latest_date}")
+    analysis_parts.append(f"📊 当前榜单股票数: {len(tickers)}")
+
+    # 2. 换手率分析
+    if tickers:
+        turnover_rate = len(new_entries) / len(tickers) * 100 if tickers else 0
+        if turnover_rate > 20:
+            analysis_parts.append(f"🔄 换手率较高 ({turnover_rate:.1f}%)，市场热点可能在切换")
+        elif turnover_rate > 10:
+            analysis_parts.append(f"🔄 换手率适中 ({turnover_rate:.1f}%)，热点相对稳定")
+        else:
+            analysis_parts.append(f"🔄 换手率较低 ({turnover_rate:.1f}%)，领涨股票稳定")
+
+    # 3. 新进入标的
+    if new_entries:
+        analysis_parts.append(f"\n🆕 新进入榜单 ({len(new_entries)}只):")
+        for ticker in new_entries[:5]:
+            analysis_parts.append(f"  • {ticker}")
+        if len(new_entries) > 5:
+            analysis_parts.append(f"  ...及其他 {len(new_entries) - 5} 只")
+    else:
+        analysis_parts.append("\n🆕 今日无新进入标的")
+
+    # 4. 掉出标的
+    if dropped:
+        analysis_parts.append(f"\n📉 掉出榜单 ({len(dropped)}只): {', '.join(dropped[:5])}")
+        if len(dropped) > 5:
+            analysis_parts.append(f"...及其他 {len(dropped) - 5} 只")
+
+    # 5. Top 10 展示
+    top_10 = tickers[:10]
+    if top_10:
+        analysis_parts.append(f"\n🏆 Top 10: {', '.join(top_10)}")
+
+    # 6. 简单建议
+    analysis_parts.append("\n💡 建议:")
+    if len(new_entries) > 10:
+        analysis_parts.append("  • 新进入标的较多，关注新热点，但注意追高风险")
+    elif len(new_entries) == 0:
+        analysis_parts.append("  • 榜单稳定，可关注持续在榜的领涨股")
+    else:
+        analysis_parts.append("  • 关注新进入标的的突破形态")
+
+    analysis_parts.append("  • 结合量价分析确认动量强度")
+    analysis_parts.append("  • 注意设置止损，控制单笔风险")
+
+    return "\n".join(analysis_parts)
 
 
 def get_ticker_descriptions(tickers: list) -> dict:

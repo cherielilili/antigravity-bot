@@ -39,7 +39,7 @@ TIMEZONE = os.getenv('TIMEZONE', 'Asia/Shanghai')  # 中国时间
 
 # 推送时间配置（中国时间）
 PUSH_SCHEDULE = {
-    "market_monitor": {"hour": 10, "minute": 0},  # 上午10点
+    "market_monitor": {"hour": 10, "minute": 0},  # 上午10:00
     "momentum50": {"hour": 10, "minute": 5},       # 上午10:05
 }
 
@@ -151,7 +151,7 @@ def setup_scheduled_jobs(application: Application):
 
         tz = pytz.timezone(TIMEZONE)
 
-        # Market Monitor - 每天上午10点（美东时间）
+        # Market Monitor - 每天上午10点（中国时间）
         mm_time = time(
             hour=PUSH_SCHEDULE["market_monitor"]["hour"],
             minute=PUSH_SCHEDULE["market_monitor"]["minute"],
@@ -165,7 +165,7 @@ def setup_scheduled_jobs(application: Application):
         )
         logger.info(f"✅ Market Monitor 定时任务已设置: {mm_time}")
 
-        # Momentum 50 - 每天上午10:05（美东时间）
+        # Momentum 50 - 每天上午10点（中国时间）
         m50_time = time(
             hour=PUSH_SCHEDULE["momentum50"]["hour"],
             minute=PUSH_SCHEDULE["momentum50"]["minute"],
@@ -192,9 +192,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"🚀 *Antigravity Assistant v2.0 已启动*\n\n"
         f"AI 分析: {ai_status}\n\n"
-        f"*每日推送:*\n"
-        f"📊 Market Monitor - 10:00 AM ET\n"
-        f"🚀 Momentum 50 - 10:05 AM ET\n\n"
+        f"*每日推送 (中国时间):*\n"
+        f"📊 Market Monitor - 10:00 AM\n"
+        f"🚀 Momentum 50 - 10:05 AM\n\n"
         f"*命令:*\n"
         f"/mm - 立即获取 Market Monitor\n"
         f"/m50 - 立即获取 Momentum 50\n"
@@ -230,7 +230,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /ping - 测试连接
 /jobs - 查看定时任务状态
 
-💡 *定时推送时间 (美东时间):*
+💡 *定时推送时间 (中国时间):*
 • Market Monitor: 10:00 AM
 • Momentum 50: 10:05 AM
     """
