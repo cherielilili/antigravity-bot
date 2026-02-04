@@ -303,11 +303,13 @@ def analyze_market_breadth(data: dict) -> str:
 
     latest = data["latest"]
 
-    # 获取数值（用于规则分析）
+    # 获取数值
     up_4pct = latest.get('up_4pct', 0)
     down_4pct = latest.get('down_4pct', 0)
     ratio_5d = latest.get('ratio_5d', 1.0)
     ratio_10d = latest.get('ratio_10d', 1.0)
+    up_25pct_qtr = latest.get('up_25pct_qtr', 0)
+    down_25pct_qtr = latest.get('down_25pct_qtr', 0)
 
     # 尝试转换为数字
     try:
@@ -315,19 +317,25 @@ def analyze_market_breadth(data: dict) -> str:
         down_4pct = int(down_4pct) if down_4pct != 'N/A' else 0
         ratio_5d = float(ratio_5d) if ratio_5d != 'N/A' else 1.0
         ratio_10d = float(ratio_10d) if ratio_10d != 'N/A' else 1.0
+        up_25pct_qtr = int(up_25pct_qtr) if up_25pct_qtr != 'N/A' else 0
+        down_25pct_qtr = int(down_25pct_qtr) if down_25pct_qtr != 'N/A' else 0
     except (ValueError, TypeError):
         pass
 
     prompt = f"""分析美股市场宽度数据，直接输出结论，不要开场白：
 
-数据：涨4%+: {up_4pct}只 | 跌4%+: {down_4pct}只 | 5日比: {ratio_5d} | 10日比: {ratio_10d}
+【短期指标】涨4%+: {up_4pct} | 跌4%+: {down_4pct} | 5日比: {ratio_5d} | 10日比: {ratio_10d}
+【中期指标】季度涨25%+: {up_25pct_qtr} | 季度跌25%+: {down_25pct_qtr}
 
-输出格式（严格遵守，每行一句话）：
-1. 强弱：[偏强/偏弱/震荡] - [原因]
-2. 信号：[关键观察]
-3. 建议：[积极/观望/减仓] - [理由]
+输出格式（严格遵守）：
+1. 短期：[偏强/偏弱/震荡] - [原因]
+2. 中期：[偏强/偏弱] - [基于季度数据]
+3. 信号：[关键观察，如有极端值必须提示]
+4. 建议：[积极/观望/减仓]
 
-规则：涨跌比>1多头占优，<1空头占优；大涨或大跌>400是极端信号"""
+极端信号规则（必须检查）：
+- 季度涨25%+<350：大概率底部区域，考虑更积极
+- 日涨4%+>1000且5日比>2：市场过热，注意止盈防回调"""
 
     # 尝试 AI 分析
     ai_result = analyze(prompt, prefer="gemini")
@@ -336,39 +344,48 @@ def analyze_market_breadth(data: dict) -> str:
     if ai_result:
         return ai_result
 
-    # AI 失败，使用简单规则分析
+    # AI 失败，使用规则分析
     logger.info("AI 不可用，使用规则分析")
-
-    # 规则分析
     analysis_parts = []
 
-    # 1. 今日强弱判断
+    # 1. 短期强弱判断
     if up_4pct > down_4pct * 1.5:
-        analysis_parts.append(f"📈 今天市场偏强，大涨股({up_4pct}只)明显多于大跌股({down_4pct}只)")
+        analysis_parts.append(f"📈 短期偏强：大涨股({up_4pct})明显多于大跌股({down_4pct})")
     elif down_4pct > up_4pct * 1.5:
-        analysis_parts.append(f"📉 今天市场偏弱，大跌股({down_4pct}只)明显多于大涨股({up_4pct}只)")
+        analysis_parts.append(f"📉 短期偏弱：大跌股({down_4pct})明显多于大涨股({up_4pct})")
     else:
-        analysis_parts.append(f"⚖️ 今天市场震荡，涨跌股票数量接近（涨{up_4pct}/跌{down_4pct}）")
+        analysis_parts.append(f"⚖️ 短期震荡：涨跌接近（涨{up_4pct}/跌{down_4pct}）")
 
-    # 2. 趋势判断
-    if ratio_5d > 1.2 and ratio_10d > 1.2:
-        analysis_parts.append("短期和中期趋势都向上，市场较健康")
-    elif ratio_5d < 0.8 and ratio_10d < 0.8:
-        analysis_parts.append("短期和中期都在走弱，需要谨慎")
-    elif ratio_5d > 1 and ratio_10d < 1:
-        analysis_parts.append("短期有反弹迹象，但中期仍偏弱")
-    elif ratio_5d < 1 and ratio_10d > 1:
-        analysis_parts.append("短期有回调，但中期趋势仍在")
+    # 2. 中期判断（季度数据）
+    if up_25pct_qtr > down_25pct_qtr * 1.5:
+        analysis_parts.append(f"📈 中期偏强：季度大涨股({up_25pct_qtr})远多于大跌股({down_25pct_qtr})")
+    elif down_25pct_qtr > up_25pct_qtr * 1.5:
+        analysis_parts.append(f"📉 中期偏弱：季度大跌股({down_25pct_qtr})远多于大涨股({up_25pct_qtr})")
+    else:
+        analysis_parts.append(f"⚖️ 中期震荡：季度涨跌接近（涨{up_25pct_qtr}/跌{down_25pct_qtr}）")
 
-    # 3. 极端信号
-    if up_4pct > 400:
-        analysis_parts.append(f"⚠️ 大涨股超400只({up_4pct})，可能是短期过热信号")
-    if down_4pct > 400:
-        analysis_parts.append(f"⚠️ 大跌股超400只({down_4pct})，可能接近恐慌底部")
+    # 3. 极端信号（重要！）
+    # 最重要：季度涨25%+ < 350 = 底部信号
+    if up_25pct_qtr < 350 and up_25pct_qtr > 0:
+        analysis_parts.append(f"🚨 重要信号：季度涨25%+仅{up_25pct_qtr}只(<350)，大概率处于底部区域，可考虑更积极")
+
+    # 过热信号：日涨4%+ > 1000 且 5日比 > 2
+    if up_4pct > 1000 and ratio_5d > 2:
+        analysis_parts.append(f"⚠️ 过热警告：日涨4%+达{up_4pct}只(>1000)且5日比{ratio_5d}(>2)，注意止盈防回调")
+    elif up_4pct > 1000:
+        analysis_parts.append(f"⚠️ 注意：日涨4%+达{up_4pct}只(>1000)，短期可能过热")
+
+    # 恐慌信号
+    if down_4pct > 500:
+        analysis_parts.append(f"⚠️ 恐慌信号：大跌股{down_4pct}只(>500)，可能接近短期底部")
 
     # 4. 操作建议
-    if ratio_5d > 1.2 and up_4pct > down_4pct:
-        analysis_parts.append("💡 建议：趋势向上，可以积极一些")
+    if up_25pct_qtr < 350 and up_25pct_qtr > 0:
+        analysis_parts.append("💡 建议：中期底部区域，逢低布局")
+    elif up_4pct > 1000 and ratio_5d > 2:
+        analysis_parts.append("💡 建议：短期过热，考虑减仓止盈")
+    elif ratio_5d > 1.2 and up_4pct > down_4pct:
+        analysis_parts.append("💡 建议：趋势向上，可以积极")
     elif ratio_5d < 0.8 and down_4pct > up_4pct:
         analysis_parts.append("💡 建议：趋势向下，观望或减仓")
     else:
