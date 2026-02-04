@@ -19,8 +19,8 @@ MM_URL = "https://stockbee.blogspot.com/p/mm.html"
 # 这个 Sheet 是 Stockbee 嵌入在页面中的，可以通过 pubhtml 访问
 KNOWN_SHEET_URLS = [
     # Stockbee Market Monitor - 尝试多种格式
-    "https://docs.google.com/spreadsheet/pub?key=0Am_cU8NLIU20dEhiQnVHN3Nnc3B1S3J6eGhKZFo0N3c&output=html",]
-
+    "https://docs.google.com/spreadsheet/pub?key=0Am_cU8NLIU20dEhiQnVHN3Nnc3B1S3J6eGhKZFo0N3c&output=csv",
+]
 # 指标说明（用于分析）
 INDICATOR_MEANINGS = {
     "up_4pct": "当日涨幅超过4%的股票数量，高值=市场强势",
