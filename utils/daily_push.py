@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
 Daily Push Module
-生成 MD 文档并推送到 Telegram + GitHub (Obsidian 同步)
+生成 MD 文档并推送到 Telegram 和 GitHub
 """
 
 import os
 import logging
-import base64
-import requests
 from datetime import datetime
 from pathlib import Path
 import asyncio
+import base64
+import requests
 
 # Telegram
 from telegram import Bot
@@ -18,15 +18,22 @@ from telegram.constants import ParseMode
 
 logger = logging.getLogger(__name__)
 
+# GitHub 配置
+GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
+GITHUB_REPO = os.getenv('GITHUB_REPO', 'cherieli/antigravity-bot')
+GITHUB_BRANCH = os.getenv('GITHUB_BRANCH', 'main')
+
 # 配置
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-# GitHub 配置（用于 Obsidian 同步）
-GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
-GITHUB_REPO = os.getenv('GITHUB_REPO', 'cherielilili/antigravity-bot')
-GITHUB_BRANCH = os.getenv('GITHUB_BRANCH', 'main')
-OBSIDIAN_CONTENT_PATH = 'obsidian-content'  # GitHub 仓库中的目录
+# Obsidian 配置
+# 注意：这是 iCloud 路径，云端无法直接访问
+# 需要通过其他方式同步（如 GitHub、Dropbox API 等）
+OBSIDIAN_VAULT_PATH = os.getenv(
+    'OBSIDIAN_VAULT_PATH',
+    '/Users/cherieli/Library/Mobile Documents/iCloud~md~obsidian/Documents/Antigravity'
+)
 
 # 文件存储路径（云端临时存储）
 CLOUD_STORAGE_PATH = os.getenv('CLOUD_STORAGE_PATH', './data')
@@ -41,70 +48,6 @@ def ensure_dirs():
     ]
     for d in dirs:
         Path(d).mkdir(parents=True, exist_ok=True)
-
-
-# ============== GitHub 同步 (Obsidian) ==============
-
-def push_to_github(content: str, category: str, filename: str = None) -> bool:
-    """
-    推送 MD 文件到 GitHub 仓库的 obsidian-content 目录
-
-    Args:
-        content: MD 内容
-        category: 类别 (MarketMonitor/Momentum50)
-        filename: 文件名（可选，默认为日期.md）
-
-    Returns:
-        bool: 是否成功
-    """
-    if not GITHUB_TOKEN:
-        logger.warning("未配置 GITHUB_TOKEN，跳过 GitHub 同步")
-        return False
-
-    if not filename:
-        filename = f"{datetime.now().strftime('%Y-%m-%d')}.md"
-
-    # GitHub API 路径
-    file_path = f"{OBSIDIAN_CONTENT_PATH}/{category}/{filename}"
-    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
-
-    headers = {
-        'Authorization': f'token {GITHUB_TOKEN}',
-        'Accept': 'application/vnd.github.v3+json',
-    }
-
-    # 检查文件是否已存在（获取 SHA）
-    sha = None
-    try:
-        response = requests.get(api_url, headers=headers, timeout=30)
-        if response.status_code == 200:
-            sha = response.json().get('sha')
-            logger.info(f"文件已存在，将更新: {file_path}")
-    except Exception as e:
-        logger.warning(f"检查文件存在性失败: {e}")
-
-    # 准备请求体
-    content_base64 = base64.b64encode(content.encode('utf-8')).decode('utf-8')
-    data = {
-        'message': f'Update {category} {filename}',
-        'content': content_base64,
-        'branch': GITHUB_BRANCH,
-    }
-    if sha:
-        data['sha'] = sha
-
-    # 推送到 GitHub
-    try:
-        response = requests.put(api_url, headers=headers, json=data, timeout=30)
-        if response.status_code in [200, 201]:
-            logger.info(f"✅ GitHub 同步成功: {file_path}")
-            return True
-        else:
-            logger.error(f"GitHub 同步失败: {response.status_code} - {response.text}")
-            return False
-    except Exception as e:
-        logger.error(f"GitHub 同步异常: {e}")
-        return False
 
 
 # ============== MD 生成 ==============
@@ -314,6 +257,70 @@ def save_md_file(content: str, category: str, filename: str = None) -> str:
     return str(filepath)
 
 
+# ============== GitHub 推送 ==============
+
+def push_to_github(content: str, category: str, filename: str = None) -> bool:
+    """
+    推送 MD 文件到 GitHub obsidian-content 目录
+
+    Args:
+        content: MD 内容
+        category: 类别 (MarketMonitor/Momentum50)
+        filename: 文件名（可选）
+
+    Returns:
+        bool: 是否成功
+    """
+    if not GITHUB_TOKEN:
+        logger.warning("GitHub Token 未配置，跳过 GitHub 同步")
+        return False
+
+    if not filename:
+        filename = f"{datetime.now().strftime('%Y-%m-%d')}.md"
+
+    # GitHub API 路径
+    file_path = f"obsidian-content/{category}/{filename}"
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
+
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+
+    # Base64 编码内容
+    content_b64 = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+
+    try:
+        # 检查文件是否存在（获取 SHA）
+        existing = requests.get(api_url, headers=headers)
+        sha = None
+        if existing.status_code == 200:
+            sha = existing.json().get('sha')
+
+        # 准备请求数据
+        data = {
+            "message": f"Update {category}/{filename}",
+            "content": content_b64,
+            "branch": GITHUB_BRANCH
+        }
+        if sha:
+            data["sha"] = sha
+
+        # 创建或更新文件
+        response = requests.put(api_url, headers=headers, json=data)
+
+        if response.status_code in [200, 201]:
+            logger.info(f"GitHub 同步成功: {file_path}")
+            return True
+        else:
+            logger.error(f"GitHub 同步失败: {response.status_code} - {response.text}")
+            return False
+
+    except Exception as e:
+        logger.error(f"GitHub 同步异常: {e}")
+        return False
+
+
 # ============== Telegram 推送 ==============
 
 async def send_telegram_message(
@@ -371,33 +378,24 @@ def format_market_monitor_telegram(data: dict, analysis: str, ob_link: str = Non
     down_4pct = latest.get("down_4pct", "N/A")
     ratio_5d = latest.get("ratio_5d", "N/A")
     ratio_10d = latest.get("ratio_10d", "N/A")
-    up_25pct_qtr = latest.get("up_25pct_qtr", "N/A")
-    down_25pct_qtr = latest.get("down_25pct_qtr", "N/A")
 
     # 判断市场情绪
     emoji = "📊"
-    try:
-        r5d = float(ratio_5d) if ratio_5d != "N/A" else 1.0
-        u25q = int(up_25pct_qtr) if up_25pct_qtr != "N/A" else 500
-        if u25q < 350:
-            emoji = "🟢"  # 底部信号，bullish
-        elif r5d > 1.2:
+    if isinstance(ratio_5d, (int, float)):
+        if ratio_5d > 1.2:
             emoji = "🟢"
-        elif r5d < 0.8:
+        elif ratio_5d < 0.8:
             emoji = "🔴"
         else:
             emoji = "🟡"
-    except (ValueError, TypeError):
-        pass
 
     message = f"""{emoji} *Market Monitor {date_str}*
 
-📈 日涨4%+: `{up_4pct}` | 📉 日跌4%+: `{down_4pct}`
+📈 涨4%+: `{up_4pct}` | 📉 跌4%+: `{down_4pct}`
 📊 5日比: `{ratio_5d}` | 10日比: `{ratio_10d}`
-📅 季涨25%+: `{up_25pct_qtr}` | 季跌25%+: `{down_25pct_qtr}`
 
 *分析:*
-{analysis[:600]}
+{analysis[:500]}
 
 🔗 [详细数据](https://stockbee.blogspot.com/p/mm.html)"""
 
@@ -427,8 +425,8 @@ def format_momentum50_telegram(data: dict, analysis: str, ob_link: str = None) -
 
     new_section = ""
     if new_entries:
-        new_tickers = " ".join([f"`{t}`" for t in new_entries])  # 显示全部新进入
-        new_section = f"\n🆕 *新进入 ({len(new_entries)}只):* {new_tickers}"
+        new_tickers = " ".join([f"`{t}`" for t in new_entries[:5]])
+        new_section = f"\n🆕 *新进入:* {new_tickers}"
 
     message = f"""🚀 *Momentum 50 {date_str}*
 
@@ -471,12 +469,14 @@ async def push_market_monitor():
     md_content = generate_market_monitor_md(data, analysis)
     md_path = save_md_file(md_content, "MarketMonitor")
 
-    # 4. 推送到 GitHub (Obsidian 同步)
+    # 4. 推送到 GitHub
     push_to_github(md_content, "MarketMonitor")
 
     # 5. 发送 Telegram
+    # 注意：ob_link 需要配合 Obsidian URI scheme 使用
+    # 格式: obsidian://open?vault=Antigravity&file=10_DailyPush/MarketMonitor/2026-02-04
     date_str = datetime.now().strftime("%Y-%m-%d")
-    ob_link = f"obsidian://open?vault=Antigravity&file=obsidian-content/MarketMonitor/{date_str}"
+    ob_link = f"obsidian://open?vault=Antigravity&file=10_DailyPush/MarketMonitor/{date_str}"
 
     message = format_market_monitor_telegram(data, analysis, ob_link)
     await send_telegram_message(message)
@@ -512,12 +512,12 @@ async def push_momentum50():
     md_content = generate_momentum50_md(data, analysis, descriptions)
     md_path = save_md_file(md_content, "Momentum50")
 
-    # 5. 推送到 GitHub (Obsidian 同步)
+    # 5. 推送到 GitHub
     push_to_github(md_content, "Momentum50")
 
     # 6. 发送 Telegram
     date_str = datetime.now().strftime("%Y-%m-%d")
-    ob_link = f"obsidian://open?vault=Antigravity&file=obsidian-content/Momentum50/{date_str}"
+    ob_link = f"obsidian://open?vault=Antigravity&file=10_DailyPush/Momentum50/{date_str}"
 
     message = format_momentum50_telegram(data, analysis, ob_link)
     await send_telegram_message(message)
