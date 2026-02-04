@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 Daily Push Module
-生成 MD 文档并推送到 Telegram
+生成 MD 文档并推送到 Telegram + GitHub (用于 Obsidian 同步)
 """
 
 import os
 import logging
+import subprocess
 from datetime import datetime
 from pathlib import Path
 import asyncio
@@ -15,6 +16,11 @@ from telegram import Bot
 from telegram.constants import ParseMode
 
 logger = logging.getLogger(__name__)
+
+# GitHub 配置
+GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')  # 需要在 Railway 设置
+GITHUB_REPO = "cherielilili/antigravity-bot"
+OBSIDIAN_CONTENT_PATH = "obsidian-content"  # GitHub 仓库中存放 MD 的目录
 
 # 配置
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -250,6 +256,76 @@ def save_md_file(content: str, category: str, filename: str = None) -> str:
     return str(filepath)
 
 
+# ============== GitHub 同步 (用于 Obsidian) ==============
+
+def push_to_github(content: str, category: str, filename: str = None) -> bool:
+    """
+    将 MD 文件推送到 GitHub（用于 Obsidian 同步）
+
+    Args:
+        content: MD 内容
+        category: 类别 (MarketMonitor/Momentum50)
+        filename: 文件名（可选）
+
+    Returns:
+        bool: 是否成功
+    """
+    if not GITHUB_TOKEN:
+        logger.warning("未配置 GITHUB_TOKEN，跳过 GitHub 同步")
+        return False
+
+    if not filename:
+        filename = f"{datetime.now().strftime('%Y-%m-%d')}.md"
+
+    # GitHub 中的文件路径
+    file_path = f"{OBSIDIAN_CONTENT_PATH}/{category}/{filename}"
+
+    try:
+        import requests
+        import base64
+
+        # GitHub API URL
+        api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
+
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+
+        # 检查文件是否已存在（需要 sha 来更新）
+        sha = None
+        try:
+            response = requests.get(api_url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                sha = response.json().get("sha")
+        except:
+            pass
+
+        # 准备请求体
+        payload = {
+            "message": f"Update {category}/{filename}",
+            "content": base64.b64encode(content.encode('utf-8')).decode('utf-8'),
+            "branch": "main"
+        }
+
+        if sha:
+            payload["sha"] = sha
+
+        # 创建或更新文件
+        response = requests.put(api_url, headers=headers, json=payload, timeout=30)
+
+        if response.status_code in [200, 201]:
+            logger.info(f"GitHub 同步成功: {file_path}")
+            return True
+        else:
+            logger.error(f"GitHub 同步失败: {response.status_code} - {response.text[:200]}")
+            return False
+
+    except Exception as e:
+        logger.error(f"GitHub 同步异常: {e}")
+        return False
+
+
 # ============== Telegram 推送 ==============
 
 async def send_telegram_message(
@@ -398,16 +474,20 @@ async def push_market_monitor():
     md_content = generate_market_monitor_md(data, analysis)
     md_path = save_md_file(md_content, "MarketMonitor")
 
-    # 4. 发送 Telegram
-    # 注意：ob_link 需要配合 Obsidian URI scheme 使用
-    # 格式: obsidian://open?vault=Antigravity&file=10_DailyPush/MarketMonitor/2026-02-04
+    # 4. 推送到 GitHub (用于 Obsidian 同步)
     date_str = datetime.now().strftime("%Y-%m-%d")
-    ob_link = f"obsidian://open?vault=Antigravity&file=10_DailyPush/MarketMonitor/{date_str}"
+    github_success = push_to_github(md_content, "MarketMonitor", f"{date_str}.md")
+
+    # 5. 发送 Telegram
+    # Obsidian 链接指向 GitHub 同步后的文件
+    ob_link = None
+    if github_success:
+        ob_link = f"obsidian://open?vault=Antigravity&file=obsidian-content/MarketMonitor/{date_str}"
 
     message = format_market_monitor_telegram(data, analysis, ob_link)
     await send_telegram_message(message)
 
-    logger.info("Market Monitor 推送完成")
+    logger.info(f"Market Monitor 推送完成 (GitHub: {'✓' if github_success else '✗'})")
     return True
 
 
