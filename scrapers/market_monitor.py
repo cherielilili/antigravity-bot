@@ -19,8 +19,7 @@ MM_URL = "https://stockbee.blogspot.com/p/mm.html"
 # 这个 Sheet 是 Stockbee 嵌入在页面中的，可以通过 pubhtml 访问
 KNOWN_SHEET_URLS = [
     # Stockbee Market Monitor - 尝试多种格式
-    "https://docs.google.com/spreadsheets/d/e/2PACX-1vTqGKz-_Kq0VZQRK5R8S2VnrNBe7R6n7tHXnOxBVpWq6Rx3pK0Yv5EwXgZVxqHYQ/pubhtml",
-]
+    "https://docs.google.com/spreadsheet/pub?key=0Am_cU8NLIU20dEhiQnVHN3Nnc3B1S3J6eGhKZFo0N3c&output=html",]
 
 # 指标说明（用于分析）
 INDICATOR_MEANINGS = {
