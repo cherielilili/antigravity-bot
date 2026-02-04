@@ -262,40 +262,28 @@ def analyze_with_claude(prompt: str, max_retries: int = 3) -> str:
 
 def analyze(prompt: str, prefer: str = "gemini") -> str:
     """
-    智能路由分析请求
-
-    优先使用 Gemini（便宜），失败后回退到 Claude
+    使用 Gemini 分析（不再回退到 Claude）
 
     Args:
         prompt: 分析提示词
-        prefer: 优先使用的 API ("gemini" 或 "claude")
+        prefer: 保留参数，但只使用 Gemini
 
     Returns:
         str: 分析结果
     """
-    if prefer == "gemini":
-        primary, fallback = analyze_with_gemini, analyze_with_claude
-        primary_name, fallback_name = "Gemini", "Claude"
-    else:
-        primary, fallback = analyze_with_claude, analyze_with_gemini
-        primary_name, fallback_name = "Claude", "Gemini"
-
-    # 尝试主要 API
+    # 只使用 Gemini
     try:
-        result = primary(prompt)
+        result = analyze_with_gemini(prompt)
         if not result.startswith("分析失败") and "未配置" not in result:
             return result
-        logger.warning(f"{primary_name} 分析失败，尝试 {fallback_name}")
+        logger.warning(f"Gemini 分析失败: {result}")
+        return None  # 返回 None 让调用方使用规则分析
     except RateLimitExceeded as e:
-        logger.warning(f"{primary_name} {e}，切换到 {fallback_name}")
+        logger.warning(f"Gemini 速率限制: {e}")
+        return None
     except Exception as e:
-        logger.warning(f"{primary_name} 异常: {e}，切换到 {fallback_name}")
-
-    # 尝试备用 API
-    try:
-        return fallback(prompt)
-    except Exception as e:
-        return f"所有 AI 服务不可用: {e}"
+        logger.warning(f"Gemini 异常: {e}")
+        return None
 
 
 # ============== 专用分析函数 ==============
@@ -315,60 +303,85 @@ def analyze_market_breadth(data: dict) -> str:
 
     latest = data["latest"]
 
-    # 计算一些派生指标
-    ratio_5d = latest.get('ratio_5d', 0)
-    ratio_10d = latest.get('ratio_10d', 0)
+    # 获取数值（用于规则分析）
     up_4pct = latest.get('up_4pct', 0)
     down_4pct = latest.get('down_4pct', 0)
+    ratio_5d = latest.get('ratio_5d', 1.0)
+    ratio_10d = latest.get('ratio_10d', 1.0)
 
-    # 判断5日趋势（短期=最近5个交易日）
-    if ratio_5d > 1.2:
-        short_term = "强势（涨的股票明显多于跌的）"
-    elif ratio_5d < 0.8:
-        short_term = "弱势（跌的股票明显多于涨的）"
-    else:
-        short_term = "震荡（涨跌互现，方向不明）"
+    # 尝试转换为数字
+    try:
+        up_4pct = int(up_4pct) if up_4pct != 'N/A' else 0
+        down_4pct = int(down_4pct) if down_4pct != 'N/A' else 0
+        ratio_5d = float(ratio_5d) if ratio_5d != 'N/A' else 1.0
+        ratio_10d = float(ratio_10d) if ratio_10d != 'N/A' else 1.0
+    except (ValueError, TypeError):
+        pass
 
-    # 判断10日趋势（中期=最近10个交易日）
-    if ratio_10d > 1.2:
-        mid_term = "强势"
-    elif ratio_10d < 0.8:
-        mid_term = "弱势"
-    else:
-        mid_term = "震荡"
-
-    prompt = f"""你是专业的美股市场分析师。请用大白话分析以下数据：
+    prompt = f"""你是专业的美股分析师，请用大白话分析以下数据：
 
 【今日数据】
-- 今天大涨(>4%)的股票: {up_4pct} 只
-- 今天大跌(>4%)的股票: {down_4pct} 只
-- 5日涨跌比: {ratio_5d} （>1多头占优，<1空头占优）
-- 10日涨跌比: {ratio_10d}
+- 大涨(>4%)的股票: {up_4pct} 只
+- 大跌(>4%)的股票: {down_4pct} 只
+- 5天涨跌比: {ratio_5d}（>1说明涨的多，<1说明跌的多）
+- 10天涨跌比: {ratio_10d}
 
-【我的初步判断】
-- 5日趋势（短期）: {short_term}
-- 10日趋势（中期）: {mid_term}
+【你要告诉我】
+1. 今天市场是偏强还是偏弱？为什么？（一句话）
+2. 有什么值得注意的信号？（1-2点）
+3. 操作建议：该积极买入/观望/减仓？
 
-请你：
-1. 用一句大白话总结今天市场状态，带emoji
-2. 给出1-2个具体观察点（用数据说话，不要空话）
-3. 给出明确的操作建议：
-   - 如果适合做多，说"可以积极找机会"
-   - 如果该观望，说"建议观望等待"
-   - 如果该防守，说"注意控制仓位"
+【要求】
+- 说人话，别用"承压"、"韧性"这种模糊词
+- 如果数据极端（大涨>400或大跌>400），要特别指出
+- 简短有力，3-5句话搞定"""
 
-要求：
-- 说人话，不要用"承压"、"韧性"这种模糊词
-- 每点不超过25字
-- 直接输出，不要客套
+    # 尝试 AI 分析
+    ai_result = analyze(prompt, prefer="gemini")
 
-参考：
-- 涨4%股票 >500 = 市场疯狂
-- 跌4%股票 >500 = 恐慌抛售
-- 比值 >1.5 = 强势
-- 比值 <0.5 = 弱势"""
+    # 如果 AI 成功，返回结果
+    if ai_result:
+        return ai_result
 
-    return analyze(prompt, prefer="gemini")
+    # AI 失败，使用简单规则分析
+    logger.info("AI 不可用，使用规则分析")
+
+    # 规则分析
+    analysis_parts = []
+
+    # 1. 今日强弱判断
+    if up_4pct > down_4pct * 1.5:
+        analysis_parts.append(f"📈 今天市场偏强，大涨股({up_4pct}只)明显多于大跌股({down_4pct}只)")
+    elif down_4pct > up_4pct * 1.5:
+        analysis_parts.append(f"📉 今天市场偏弱，大跌股({down_4pct}只)明显多于大涨股({up_4pct}只)")
+    else:
+        analysis_parts.append(f"⚖️ 今天市场震荡，涨跌股票数量接近（涨{up_4pct}/跌{down_4pct}）")
+
+    # 2. 趋势判断
+    if ratio_5d > 1.2 and ratio_10d > 1.2:
+        analysis_parts.append("短期和中期趋势都向上，市场较健康")
+    elif ratio_5d < 0.8 and ratio_10d < 0.8:
+        analysis_parts.append("短期和中期都在走弱，需要谨慎")
+    elif ratio_5d > 1 and ratio_10d < 1:
+        analysis_parts.append("短期有反弹迹象，但中期仍偏弱")
+    elif ratio_5d < 1 and ratio_10d > 1:
+        analysis_parts.append("短期有回调，但中期趋势仍在")
+
+    # 3. 极端信号
+    if up_4pct > 400:
+        analysis_parts.append(f"⚠️ 大涨股超400只({up_4pct})，可能是短期过热信号")
+    if down_4pct > 400:
+        analysis_parts.append(f"⚠️ 大跌股超400只({down_4pct})，可能接近恐慌底部")
+
+    # 4. 操作建议
+    if ratio_5d > 1.2 and up_4pct > down_4pct:
+        analysis_parts.append("💡 建议：趋势向上，可以积极一些")
+    elif ratio_5d < 0.8 and down_4pct > up_4pct:
+        analysis_parts.append("💡 建议：趋势向下，观望或减仓")
+    else:
+        analysis_parts.append("💡 建议：震荡市，轻仓观望")
+
+    return "\n".join(analysis_parts)
 
 
 def analyze_momentum_stocks(data: dict, include_descriptions: bool = True) -> str:
