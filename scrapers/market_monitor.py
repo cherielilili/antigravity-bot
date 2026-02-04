@@ -1,32 +1,31 @@
 #!/usr/bin/env python3
 """
 Market Monitor Scraper
-从 Stockbee 抓取市场宽度数据
-使用 Playwright 渲染页面获取 iframe 内的数据
+从 Google Sheets 直接获取 CSV 数据
+简单可靠的方案
 """
 
-import asyncio
+import csv
+import io
 import re
 import logging
+import requests
 from datetime import datetime
 from typing import Optional, Dict, List
 
-import nest_asyncio
-nest_asyncio.apply()
-
 logger = logging.getLogger(__name__)
 
-# Market Monitor 页面 URL
-MM_URL = "https://stockbee.blogspot.com/p/mm.html"
+# Google Sheets 直接导出 URL
+SHEET_ID = "1O6OhS7ciA8zwfycBfGPbP2fWJnR0pn2UUvFZVDP9jpE"
+SHEET_GID = "1082103394"
+CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={SHEET_GID}"
 
-# 指标说明（用于分析）
+# 指标说明
 INDICATOR_MEANINGS = {
     "up_4pct": "当日涨幅超过4%的股票数量，高值=市场强势",
     "down_4pct": "当日跌幅超过4%的股票数量，高值=市场弱势",
     "ratio_5d": "5日涨跌比，>1=bullish, <1=bearish",
     "ratio_10d": "10日涨跌比，>1=bullish, <1=bearish",
-    "up_25pct_qtr": "季度涨幅超25%的股票数，高值=市场有动量",
-    "down_25pct_qtr": "季度跌幅超25%的股票数，高值=市场承压",
 }
 
 # 极值阈值
@@ -39,99 +38,45 @@ EXTREME_THRESHOLDS = {
 
 
 def parse_int(s: str) -> int:
+    """解析整数，处理逗号分隔符"""
     try:
-        return int(s.replace(',', '').strip())
+        return int(str(s).replace(',', '').strip())
     except:
         return 0
 
 
 def parse_float(s: str) -> float:
+    """解析浮点数"""
     try:
-        return float(s.replace(',', '').strip())
+        return float(str(s).replace(',', '').strip())
     except:
         return 0.0
 
 
-async def fetch_with_playwright() -> Optional[Dict]:
-    """使用 Playwright 渲染页面并提取数据"""
+def fetch_csv_data() -> Optional[List[List[str]]]:
+    """直接从 Google Sheets 获取 CSV 数据"""
+    logger.info(f"正在从 Google Sheets 获取数据...")
+
     try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        logger.error("Playwright 未安装")
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        response = requests.get(CSV_URL, headers=headers, timeout=30)
+        response.raise_for_status()
+
+        # 解析 CSV
+        reader = csv.reader(io.StringIO(response.text))
+        rows = list(reader)
+
+        logger.info(f"获取到 {len(rows)} 行数据")
+        return rows
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"请求失败: {e}")
         return None
-
-    logger.info("使用 Playwright 获取 Market Monitor 数据...")
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
-
-        try:
-            await page.goto(MM_URL, wait_until='networkidle', timeout=60000)
-            logger.info("页面加载完成，等待 iframe...")
-
-            await page.wait_for_selector('iframe[src*="docs.google.com"]', timeout=30000)
-
-            frames = page.frames
-            google_frame = None
-            for frame in frames:
-                if 'docs.google.com' in frame.url:
-                    google_frame = frame
-                    break
-
-            if not google_frame:
-                logger.error("未找到 Google Sheets iframe")
-                await browser.close()
-                return None
-
-            logger.info(f"找到 iframe: {google_frame.url[:60]}...")
-
-            await google_frame.wait_for_selector('table', timeout=30000)
-
-            rows_data = await google_frame.evaluate('''() => {
-                const tables = document.querySelectorAll('table');
-                for (const table of tables) {
-                    const rows = table.querySelectorAll('tr');
-                    if (rows.length < 5) continue;
-                    const data = [];
-                    for (const row of rows) {
-                        const cells = row.querySelectorAll('td, th');
-                        const rowData = [];
-                        for (const cell of cells) {
-                            rowData.push(cell.textContent.trim());
-                        }
-                        if (rowData.length > 0) {
-                            data.push(rowData);
-                        }
-                    }
-                    if (data.length > 5) return data;
-                }
-                return [];
-            }''')
-
-            await browser.close()
-
-            if not rows_data or len(rows_data) < 3:
-                logger.error("未能提取表格数据")
-                return None
-
-            logger.info(f"提取到 {len(rows_data)} 行原始数据")
-
-            data = parse_table_data(rows_data)
-            if data:
-                return {
-                    "date": datetime.now().strftime("%Y-%m-%d"),
-                    "data": data,
-                    "latest": data[0] if data else None,
-                    "source": "playwright"
-                }
-
-            return None
-
-        except Exception as e:
-            logger.error(f"Playwright 获取失败: {e}")
-            await browser.close()
-            return None
+    except Exception as e:
+        logger.error(f"解析失败: {e}")
+        return None
 
 
 def parse_table_data(rows: List[List[str]]) -> List[Dict]:
@@ -142,7 +87,8 @@ def parse_table_data(rows: List[List[str]]) -> List[Dict]:
         if len(row) < 7:
             continue
 
-        first_cell = row[0]
+        first_cell = row[0].strip()
+        # 检查是否是日期格式 (如 "2/3/2026")
         if not re.match(r'\d{1,2}/\d{1,2}/\d{4}', first_cell):
             continue
 
@@ -157,6 +103,7 @@ def parse_table_data(rows: List[List[str]]) -> List[Dict]:
                 "down_25pct_qtr": parse_int(row[6]) if len(row) > 6 else 0,
             }
 
+            # 额外指标
             if len(row) >= 11:
                 row_data.update({
                     "up_25pct_month": parse_int(row[7]),
@@ -174,21 +121,27 @@ def parse_table_data(rows: List[List[str]]) -> List[Dict]:
 
 
 def fetch_market_monitor() -> Optional[Dict]:
-    """抓取 Market Monitor 数据"""
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+    """抓取 Market Monitor 数据 - 主入口函数"""
+    rows = fetch_csv_data()
 
-    result = loop.run_until_complete(fetch_with_playwright())
+    if not rows:
+        logger.error("无法获取 CSV 数据")
+        return None
 
-    if result:
-        logger.info(f"成功获取 {len(result.get('data', []))} 条数据")
-    else:
-        logger.error("Market Monitor 数据获取失败")
+    data = parse_table_data(rows)
 
-    return result
+    if not data:
+        logger.error("无法解析表格数据")
+        return None
+
+    logger.info(f"成功获取 {len(data)} 条数据")
+
+    return {
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "data": data,
+        "latest": data[0] if data else None,
+        "source": "google_sheets_csv"
+    }
 
 
 def analyze_trend(data: list, days: int = 5) -> dict:
@@ -206,6 +159,7 @@ def analyze_trend(data: list, days: int = 5) -> dict:
         "extremes": [],
     }
 
+    # 检查极值
     for key, thresholds in EXTREME_THRESHOLDS.items():
         value = latest.get(key)
         if value is None:
@@ -224,9 +178,9 @@ def analyze_trend(data: list, days: int = 5) -> dict:
                 "level": "extreme_low",
             })
 
+    # 趋势变化
     if len(recent) >= 2:
         prev = recent[1]
-
         if latest.get("ratio_5d") and prev.get("ratio_5d"):
             change = latest["ratio_5d"] - prev["ratio_5d"]
             if abs(change) > 0.1:
@@ -238,6 +192,7 @@ def analyze_trend(data: list, days: int = 5) -> dict:
                     "direction": direction
                 })
 
+    # 市场状态
     if latest.get("ratio_5d"):
         if latest["ratio_5d"] > 1.2:
             analysis["summary"].append("市场短期强势")
