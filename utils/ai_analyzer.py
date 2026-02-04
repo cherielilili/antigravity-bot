@@ -566,14 +566,15 @@ NVDA: AI芯片龙头，GPU领导者
 
         result = analyze(prompt, prefer="gemini")
 
-        # 解析结果
-        for line in result.strip().split('\n'):
-            if ':' in line:
-                parts = line.split(':', 1)
-                ticker = parts[0].strip().upper()
-                desc = parts[1].strip() if len(parts) > 1 else ""
-                if ticker in batch:
-                    all_descriptions[ticker] = desc
+        # 解析结果（检查 None）
+        if result:
+            for line in result.strip().split('\n'):
+                if ':' in line:
+                    parts = line.split(':', 1)
+                    ticker = parts[0].strip().upper()
+                    desc = parts[1].strip() if len(parts) > 1 else ""
+                    if ticker in batch:
+                        all_descriptions[ticker] = desc
 
         # 批次间等待
         if i + batch_size < len(tickers):
