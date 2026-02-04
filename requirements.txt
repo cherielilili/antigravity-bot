@@ -1,5 +1,5 @@
 # Telegram Bot
-python-telegram-bot==20.7
+python-telegram-bot[job-queue]==20.7
 
 # 定时任务
 APScheduler==3.10.4
@@ -8,12 +8,18 @@ APScheduler==3.10.4
 requests==2.31.0
 aiohttp==3.9.1
 
+# Web Scraping
+beautifulsoup4>=4.12.0
+
 # 环境变量
 python-dotenv==1.0.0
 
 # AI APIs
 anthropic==0.18.1
 google-generativeai==0.3.2
+
+# Timezone
+pytz>=2024.1
 
 # 数据处理
 pyyaml==6.0.1
