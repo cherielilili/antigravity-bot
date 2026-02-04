@@ -85,7 +85,7 @@ async def fetch_with_playwright() -> Optional[Dict]:
 
             await google_frame.wait_for_selector('table', timeout=30000)
 
-            rows_data = await google_frame.evaluate(`() => {
+            rows_data = await google_frame.evaluate('''() => {
                 const tables = document.querySelectorAll('table');
                 for (const table of tables) {
                     const rows = table.querySelectorAll('tr');
@@ -104,7 +104,7 @@ async def fetch_with_playwright() -> Optional[Dict]:
                     if (data.length > 5) return data;
                 }
                 return [];
-            }`)
+            }''')
 
             await browser.close()
 
