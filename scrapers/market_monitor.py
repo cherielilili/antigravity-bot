@@ -11,6 +11,9 @@ import logging
 from datetime import datetime
 from typing import Optional, Dict, List
 
+import nest_asyncio
+nest_asyncio.apply()
+
 logger = logging.getLogger(__name__)
 
 # Market Monitor 页面 URL

@@ -27,3 +27,6 @@ pyyaml==6.0.1
 
 # Browser automation for web scraping
 playwright==1.41.0
+
+# Nested event loop support
+nest_asyncio==1.6.0
