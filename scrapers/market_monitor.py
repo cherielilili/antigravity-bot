@@ -15,6 +15,13 @@ logger = logging.getLogger(__name__)
 # Market Monitor 页面 URL
 MM_URL = "https://stockbee.blogspot.com/p/mm.html"
 
+# 直接使用已知的 Google Sheets URL（公开分享的表格）
+# 这个 Sheet 是 Stockbee 嵌入在页面中的，可以通过 pubhtml 访问
+KNOWN_SHEET_URLS = [
+    # Stockbee Market Monitor - 尝试多种格式
+    "https://docs.google.com/spreadsheets/d/e/2PACX-1vTqGKz-_Kq0VZQRK5R8S2VnrNBe7R6n7tHXnOxBVpWq6Rx3pK0Yv5EwXgZVxqHYQ/pubhtml",
+]
+
 # 指标说明（用于分析）
 INDICATOR_MEANINGS = {
     "up_4pct": "当日涨幅超过4%的股票数量，高值=市场强势",
@@ -54,10 +61,14 @@ def fetch_market_monitor() -> dict:
         }
     """
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
     }
 
+    # 方法1: 先尝试从 Stockbee 页面获取 iframe URL
     try:
+        logger.info("尝试从 Stockbee 页面获取数据...")
         response = requests.get(MM_URL, headers=headers, timeout=30)
         response.raise_for_status()
 
@@ -65,49 +76,92 @@ def fetch_market_monitor() -> dict:
 
         # 查找嵌入的 Google Sheet iframe
         iframes = soup.find_all('iframe')
-        sheet_url = None
 
         for iframe in iframes:
             src = iframe.get('src', '')
+            logger.info(f"找到 iframe: {src[:100]}...")
+
             if 'docs.google.com/spreadsheets' in src:
-                sheet_url = src
-                break
+                # 尝试从 iframe 获取数据
+                result = fetch_from_google_sheets(src)
+                if result and result.get('data'):
+                    logger.info(f"从 Google Sheets iframe 获取到 {len(result['data'])} 条数据")
+                    return result
 
-        if sheet_url:
-            # 从 Google Sheets 获取数据
-            return fetch_from_google_sheets(sheet_url)
+    except Exception as e:
+        logger.warning(f"从 Stockbee 页面获取失败: {e}")
 
-        # 如果没有找到 iframe，尝试直接解析页面上的表格
+    # 方法2: 尝试直接从已知的 Google Sheets 公开链接获取
+    for known_url in KNOWN_SHEET_URLS:
+        try:
+            logger.info(f"尝试已知的 Sheet URL: {known_url[:50]}...")
+            result = fetch_from_pubhtml(known_url)
+            if result and result.get('data'):
+                logger.info(f"从已知 URL 获取到 {len(result['data'])} 条数据")
+                return result
+        except Exception as e:
+            logger.warning(f"从已知 URL 获取失败: {e}")
+            continue
+
+    logger.error("所有数据获取方法都失败了")
+    return None
+
+
+def fetch_from_pubhtml(pubhtml_url: str) -> dict:
+    """
+    从 Google Sheets 的 pubhtml 格式获取数据
+    """
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+    }
+
+    try:
+        response = requests.get(pubhtml_url, headers=headers, timeout=30)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # 查找所有表格
         tables = soup.find_all('table')
 
         for table in tables:
             data = parse_mm_table(table)
-            if data:
+            if data and len(data) > 5:  # 确保有足够的数据
                 return {
                     "date": datetime.now().strftime("%Y-%m-%d"),
                     "data": data,
                     "latest": data[0] if data else None,
-                    "source": "direct_scrape"
+                    "source": "pubhtml"
                 }
 
-        logger.warning("未找到 Market Monitor 表格")
         return None
 
     except Exception as e:
-        logger.error(f"抓取 Market Monitor 失败: {e}")
+        logger.error(f"从 pubhtml 获取数据失败: {e}")
         return None
 
 
 def fetch_from_google_sheets(iframe_url: str) -> dict:
     """
     从 Google Sheets iframe URL 提取数据
+    尝试多种方法: CSV导出, pubhtml, 直接HTML解析
     """
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+    }
+
     # 从 iframe URL 提取 spreadsheet ID
     # 格式: https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/...
+    # 或者: https://docs.google.com/spreadsheets/d/e/PUBLISHED_ID/...
     match = re.search(r'/d/([a-zA-Z0-9_-]+)', iframe_url)
     if not match:
+        # 尝试 /d/e/ 格式
+        match = re.search(r'/d/e/([a-zA-Z0-9_-]+)', iframe_url)
+
+    if not match:
         logger.warning(f"无法从 URL 提取 Sheet ID: {iframe_url}")
-        return None
+        # 尝试直接获取 iframe 内容
+        return fetch_from_pubhtml(iframe_url)
 
     sheet_id = match.group(1)
 
@@ -115,47 +169,105 @@ def fetch_from_google_sheets(iframe_url: str) -> dict:
     gid_match = re.search(r'gid=(\d+)', iframe_url)
     gid = gid_match.group(1) if gid_match else "0"
 
-    # 构建 CSV 导出 URL
+    # 方法1: 尝试 CSV 导出
     csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
-
     try:
-        response = requests.get(csv_url, timeout=30)
-        response.raise_for_status()
-
-        # 解析 CSV
-        lines = response.text.strip().split('\n')
-        data = parse_csv_data(lines)
-
-        return {
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "data": data,
-            "latest": data[0] if data else None,
-            "source": "google_sheets",
-            "sheet_id": sheet_id
-        }
-
+        logger.info(f"尝试 CSV 导出: {csv_url[:60]}...")
+        response = requests.get(csv_url, headers=headers, timeout=30)
+        if response.status_code == 200 and 'text/csv' in response.headers.get('content-type', ''):
+            lines = response.text.strip().split('\n')
+            data = parse_csv_data(lines)
+            if data and len(data) > 3:
+                return {
+                    "date": datetime.now().strftime("%Y-%m-%d"),
+                    "data": data,
+                    "latest": data[0] if data else None,
+                    "source": "google_sheets_csv",
+                    "sheet_id": sheet_id
+                }
     except Exception as e:
-        logger.error(f"从 Google Sheets 获取数据失败: {e}")
-        return None
+        logger.warning(f"CSV 导出失败: {e}")
+
+    # 方法2: 尝试 pubhtml 格式
+    pubhtml_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/pubhtml?gid={gid}"
+    try:
+        logger.info(f"尝试 pubhtml: {pubhtml_url[:60]}...")
+        response = requests.get(pubhtml_url, headers=headers, timeout=30)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            tables = soup.find_all('table')
+            for table in tables:
+                data = parse_mm_table(table)
+                if data and len(data) > 3:
+                    return {
+                        "date": datetime.now().strftime("%Y-%m-%d"),
+                        "data": data,
+                        "latest": data[0] if data else None,
+                        "source": "google_sheets_pubhtml",
+                        "sheet_id": sheet_id
+                    }
+    except Exception as e:
+        logger.warning(f"pubhtml 获取失败: {e}")
+
+    # 方法3: 直接获取原始 iframe URL
+    try:
+        logger.info(f"尝试直接获取 iframe: {iframe_url[:60]}...")
+        response = requests.get(iframe_url, headers=headers, timeout=30)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            tables = soup.find_all('table')
+            for table in tables:
+                data = parse_mm_table(table)
+                if data and len(data) > 3:
+                    return {
+                        "date": datetime.now().strftime("%Y-%m-%d"),
+                        "data": data,
+                        "latest": data[0] if data else None,
+                        "source": "google_sheets_iframe",
+                        "sheet_id": sheet_id
+                    }
+    except Exception as e:
+        logger.warning(f"iframe 直接获取失败: {e}")
+
+    logger.error(f"所有 Google Sheets 获取方法都失败了")
+    return None
 
 
 def parse_mm_table(table) -> list:
     """
     解析 Market Monitor HTML 表格
+    支持多种表格格式
     """
     rows = table.find_all('tr')
     data = []
 
-    # 跳过表头行
-    for row in rows[2:]:  # 假设前两行是表头
+    # 找到数据行的起始位置（跳过表头）
+    start_row = 0
+    for i, row in enumerate(rows):
         cells = row.find_all(['td', 'th'])
-        if len(cells) < 8:
+        if cells:
+            first_cell = cells[0].get_text(strip=True)
+            # 检查是否是日期格式 (如 "2/3/2026" 或 "1/30/2026")
+            if re.match(r'\d{1,2}/\d{1,2}/\d{4}', first_cell):
+                start_row = i
+                break
+
+    # 解析数据行
+    for row in rows[start_row:]:
+        cells = row.find_all(['td', 'th'])
+        if len(cells) < 7:
             continue
 
         try:
+            first_cell = cells[0].get_text(strip=True)
+
+            # 验证是日期格式
+            if not re.match(r'\d{1,2}/\d{1,2}/\d{4}', first_cell):
+                continue
+
             # 提取数据和颜色
             row_data = {
-                "date": cells[0].get_text(strip=True),
+                "date": first_cell,
                 "up_4pct": parse_int(cells[1].get_text(strip=True)),
                 "down_4pct": parse_int(cells[2].get_text(strip=True)),
                 "ratio_5d": parse_float(cells[3].get_text(strip=True)),
@@ -164,13 +276,21 @@ def parse_mm_table(table) -> list:
                 "down_25pct_qtr": parse_int(cells[6].get_text(strip=True)),
             }
 
-            # 如果有更多列
-            if len(cells) >= 12:
+            # 如果有更多列 (Secondary Breadth Indicators)
+            if len(cells) >= 11:
                 row_data.update({
                     "up_25pct_month": parse_int(cells[7].get_text(strip=True)),
                     "down_25pct_month": parse_int(cells[8].get_text(strip=True)),
                     "up_50pct_month": parse_int(cells[9].get_text(strip=True)),
                     "down_50pct_month": parse_int(cells[10].get_text(strip=True)),
+                })
+
+            # 额外列: 13% in 34 days 和 Worden
+            if len(cells) >= 14:
+                row_data.update({
+                    "up_13pct_34d": parse_int(cells[11].get_text(strip=True)),
+                    "down_13pct_34d": parse_int(cells[12].get_text(strip=True)),
+                    "worden_universe": parse_int(cells[13].get_text(strip=True)),
                 })
 
             # 提取颜色信息
