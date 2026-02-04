@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # GitHub 配置
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
-GITHUB_REPO = os.getenv('GITHUB_REPO', 'cherieli/antigravity-bot')
+GITHUB_REPO = os.getenv('GITHUB_REPO', 'cherielilili/antigravity-bot')
 GITHUB_BRANCH = os.getenv('GITHUB_BRANCH', 'main')
 
 # 配置
