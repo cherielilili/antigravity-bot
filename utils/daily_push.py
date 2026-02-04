@@ -551,6 +551,72 @@ async def daily_push_all():
     return results
 
 
+async def push_gmail_brief(label: str = None, hours_back: int = None):
+    """
+    Gmail 简报推送流程
+
+    Args:
+        label: Gmail 标签名称（可选）
+        hours_back: 查看多少小时内的邮件（可选）
+    """
+    from scrapers.gmail_brief import fetch_gmail_emails, generate_gmail_brief
+
+    logger.info("开始 Gmail 简报推送...")
+
+    # 1. 获取邮件
+    emails = fetch_gmail_emails(label_name=label, hours_back=hours_back)
+    if not emails:
+        await send_telegram_message("📭 *Gmail 简报*\n\n最近没有新邮件")
+        return False
+
+    # 2. 生成简报
+    brief = generate_gmail_brief(emails)
+
+    # 3. 推送到 GitHub (可选)
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    md_content = f"""---
+title: Gmail Brief {date_str}
+date: {date_str}
+type: daily-push
+source: gmail
+tags:
+  - gmail
+  - brief
+---
+
+# Gmail 简报 {date_str}
+
+## 今日概览
+
+{brief['overall_summary']}
+
+## 邮件列表
+
+"""
+    for i, email in enumerate(brief['emails'][:20], 1):
+        md_content += f"""### {i}. {email['subject']}
+
+- **发件人**: {email['sender']}
+- **时间**: {email['date'].strftime('%Y-%m-%d %H:%M')}
+- **链接**: [查看原文]({email['gmail_link']})
+
+**摘要**: {email.get('summary', email['snippet'])}
+
+---
+
+"""
+
+    # 保存并推送到 GitHub
+    save_md_file(md_content, "GmailBrief")
+    push_to_github(md_content, "GmailBrief")
+
+    # 4. 发送 Telegram
+    await send_telegram_message(brief['telegram_message'])
+
+    logger.info("Gmail 简报推送完成")
+    return True
+
+
 if __name__ == "__main__":
     # 测试
     logging.basicConfig(level=logging.INFO)

@@ -215,6 +215,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 *每日推送:*
 /mm - 立即获取 Market Monitor
 /m50 - 立即获取 Momentum 50
+/gmail - 获取 Gmail 简报
+/gmail 标签名 - 指定标签的简报
 /push - 手动触发所有推送
 
 *AI 功能:*
@@ -301,6 +303,22 @@ async def manual_push_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ 推送完成: {success}/{total} 成功")
     except Exception as e:
         await update.message.reply_text(f"❌ 推送失败: {str(e)}")
+
+
+async def manual_gmail_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """手动触发 Gmail 简报"""
+    # 可选参数：标签名称
+    label = context.args[0] if context.args else None
+
+    label_info = f" (标签: {label})" if label else ""
+    await update.message.reply_text(f"📬 正在获取 Gmail 简报{label_info}...")
+
+    try:
+        from utils.daily_push import push_gmail_brief
+        await push_gmail_brief(label=label)
+    except Exception as e:
+        logger.error(f"Gmail 简报获取失败: {e}")
+        await update.message.reply_text(f"❌ 获取失败: {str(e)}")
 
 
 async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -408,6 +426,7 @@ def main():
     application.add_handler(CommandHandler("jobs", jobs_status))
     application.add_handler(CommandHandler("mm", manual_market_monitor))
     application.add_handler(CommandHandler("m50", manual_momentum50))
+    application.add_handler(CommandHandler("gmail", manual_gmail_brief))
     application.add_handler(CommandHandler("push", manual_push_all))
     application.add_handler(CommandHandler("ask", ask))
     application.add_handler(CommandHandler("analyze", analyze))
