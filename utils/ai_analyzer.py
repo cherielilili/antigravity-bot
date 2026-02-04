@@ -331,11 +331,16 @@ def analyze_market_breadth(data: dict) -> str:
 1. 短期：[偏强/偏弱/震荡] - [原因]
 2. 中期：[偏强/偏弱] - [基于季度数据]
 3. 信号：[关键观察，如有极端值必须提示]
-4. 建议：[积极/观望/减仓]
+4. 建议：[具体可操作的建议，包含仓位、风险管理要点]
 
 极端信号规则（必须检查）：
 - 季度涨25%+<350：大概率底部区域，考虑更积极
-- 日涨4%+>1000且5日比>2：市场过热，注意止盈防回调"""
+- 日涨4%+>1000且5日比>2：市场过热，注意止盈防回调
+
+建议示例：
+- 观望：不建议增加仓位，关注RR(风险回报比)，保持交易纪律
+- 积极：可适度加仓强势股，但控制单笔风险
+- 减仓：考虑止盈或减少敞口，保护利润"""
 
     # 尝试 AI 分析
     ai_result = analyze(prompt, prefer="gemini")
@@ -379,17 +384,17 @@ def analyze_market_breadth(data: dict) -> str:
     if down_4pct > 500:
         analysis_parts.append(f"⚠️ 恐慌信号：大跌股{down_4pct}只(>500)，可能接近短期底部")
 
-    # 4. 操作建议
+    # 4. 操作建议（具体可操作）
     if up_25pct_qtr < 350 and up_25pct_qtr > 0:
-        analysis_parts.append("💡 建议：中期底部区域，逢低布局")
+        analysis_parts.append("💡 建议：中期底部区域，可逢低分批布局强势股，关注反转信号确认")
     elif up_4pct > 1000 and ratio_5d > 2:
-        analysis_parts.append("💡 建议：短期过热，考虑减仓止盈")
+        analysis_parts.append("💡 建议：短期过热，考虑部分止盈锁定利润，提高止损位保护收益")
     elif ratio_5d > 1.2 and up_4pct > down_4pct:
-        analysis_parts.append("💡 建议：趋势向上，可以积极")
+        analysis_parts.append("💡 建议：趋势向上，可适度加仓强势股，但控制单笔风险在2%以内")
     elif ratio_5d < 0.8 and down_4pct > up_4pct:
-        analysis_parts.append("💡 建议：趋势向下，观望或减仓")
+        analysis_parts.append("💡 建议：趋势向下，减少敞口或观望，等待企稳信号再考虑入场")
     else:
-        analysis_parts.append("💡 建议：震荡市，轻仓观望")
+        analysis_parts.append("💡 建议：观望，不建议大幅增加仓位，关注RR(风险回报比)，保持交易纪律")
 
     return "\n".join(analysis_parts)
 

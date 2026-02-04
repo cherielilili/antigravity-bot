@@ -328,9 +328,9 @@ def format_market_monitor_telegram(data: dict, analysis: str, ob_link: str = Non
 
     message = f"""{emoji} *Market Monitor {date_str}*
 
-*短期* 📈 涨4%+: `{up_4pct}` | 📉 跌4%+: `{down_4pct}`
-*短期* 5日比: `{ratio_5d}` | 10日比: `{ratio_10d}`
-*中期* 季涨25%+: `{up_25pct_qtr}` | 季跌25%+: `{down_25pct_qtr}`
+📈 日涨4%+: `{up_4pct}` | 📉 日跌4%+: `{down_4pct}`
+📊 5日比: `{ratio_5d}` | 10日比: `{ratio_10d}`
+📅 季涨25%+: `{up_25pct_qtr}` | 季跌25%+: `{down_25pct_qtr}`
 
 *分析:*
 {analysis[:600]}
