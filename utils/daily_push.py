@@ -363,8 +363,8 @@ def format_momentum50_telegram(data: dict, analysis: str, ob_link: str = None) -
 
     new_section = ""
     if new_entries:
-        new_tickers = " ".join([f"`{t}`" for t in new_entries[:5]])
-        new_section = f"\n🆕 *新进入:* {new_tickers}"
+        new_tickers = " ".join([f"`{t}`" for t in new_entries])  # 显示全部新进入
+        new_section = f"\n🆕 *新进入 ({len(new_entries)}只):* {new_tickers}"
 
     message = f"""🚀 *Momentum 50 {date_str}*
 
