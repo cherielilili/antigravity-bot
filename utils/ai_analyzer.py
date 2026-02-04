@@ -315,29 +315,58 @@ def analyze_market_breadth(data: dict) -> str:
 
     latest = data["latest"]
 
-    prompt = f"""你是专业的美股市场分析师。请分析以下市场宽度（Market Breadth）数据：
+    # 计算一些派生指标
+    ratio_5d = latest.get('ratio_5d', 0)
+    ratio_10d = latest.get('ratio_10d', 0)
+    up_4pct = latest.get('up_4pct', 0)
+    down_4pct = latest.get('down_4pct', 0)
 
-日期: {latest.get('date', 'N/A')}
-当日涨4%+股票数: {latest.get('up_4pct', 'N/A')}
-当日跌4%+股票数: {latest.get('down_4pct', 'N/A')}
-5日涨跌比: {latest.get('ratio_5d', 'N/A')}
-10日涨跌比: {latest.get('ratio_10d', 'N/A')}
-季度涨25%+股票数: {latest.get('up_25pct_qtr', 'N/A')}
-季度跌25%+股票数: {latest.get('down_25pct_qtr', 'N/A')}
-月涨25%+股票数: {latest.get('up_25pct_month', 'N/A')}
-月跌25%+股票数: {latest.get('down_25pct_month', 'N/A')}
+    # 判断5日趋势（短期=最近5个交易日）
+    if ratio_5d > 1.2:
+        short_term = "强势（涨的股票明显多于跌的）"
+    elif ratio_5d < 0.8:
+        short_term = "弱势（跌的股票明显多于涨的）"
+    else:
+        short_term = "震荡（涨跌互现，方向不明）"
 
-请提供：
-1. 市场状态总结（一句话，用emoji标注情绪）
-2. 关键观察点（2-3点，每点不超过20字）
-3. 操作建议（激进/中性/保守）
+    # 判断10日趋势（中期=最近10个交易日）
+    if ratio_10d > 1.2:
+        mid_term = "强势"
+    elif ratio_10d < 0.8:
+        mid_term = "弱势"
+    else:
+        mid_term = "震荡"
 
-注意：
-- 涨跌比 >1 表示上涨股票多于下跌，<1 表示相反
-- 极端值（如涨4%股票>500或<50）通常是反转信号
-- 回答简洁有力，适合手机阅读
+    prompt = f"""你是专业的美股市场分析师。请用大白话分析以下数据：
 
-直接输出分析，不要加开场白。"""
+【今日数据】
+- 今天大涨(>4%)的股票: {up_4pct} 只
+- 今天大跌(>4%)的股票: {down_4pct} 只
+- 5日涨跌比: {ratio_5d} （>1多头占优，<1空头占优）
+- 10日涨跌比: {ratio_10d}
+
+【我的初步判断】
+- 5日趋势（短期）: {short_term}
+- 10日趋势（中期）: {mid_term}
+
+请你：
+1. 用一句大白话总结今天市场状态，带emoji
+2. 给出1-2个具体观察点（用数据说话，不要空话）
+3. 给出明确的操作建议：
+   - 如果适合做多，说"可以积极找机会"
+   - 如果该观望，说"建议观望等待"
+   - 如果该防守，说"注意控制仓位"
+
+要求：
+- 说人话，不要用"承压"、"韧性"这种模糊词
+- 每点不超过25字
+- 直接输出，不要客套
+
+参考：
+- 涨4%股票 >500 = 市场疯狂
+- 跌4%股票 >500 = 恐慌抛售
+- 比值 >1.5 = 强势
+- 比值 <0.5 = 弱势"""
 
     return analyze(prompt, prefer="gemini")
 
