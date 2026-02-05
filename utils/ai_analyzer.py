@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
-AI Analyzer with Rate Limiting
-使用 Gemini/Claude 进行分析，带限流功能
+AI Analyzer - 支持多个大模型提供商
+优先使用智谱 GLM，备选 Gemini
+
+支持的提供商:
+- 智谱 AI (GLM-4-Flash) - 推荐，便宜且稳定
+- Google Gemini (备选)
 """
 
 import os
@@ -13,28 +17,31 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
-# API 配置
+# ============== API 配置 ==============
+# 智谱 AI
+ZHIPU_API_KEY = os.getenv('ZHIPU_API_KEY')
+# Gemini (备选)
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
 
-# 限流配置
+# 默认提供商优先级
+DEFAULT_PROVIDER = os.getenv('AI_PROVIDER', 'zhipu')  # zhipu 或 gemini
+
+# ============== 限流配置 ==============
 RATE_LIMIT = {
-    "gemini": {
-        "requests_per_minute": 10,  # 保守设置
-        "requests_per_day": 1000,
-        "cooldown_seconds": 6,  # 每次请求间隔
+    "zhipu": {
+        "requests_per_minute": 30,
+        "cooldown_seconds": 2,
     },
-    "claude": {
-        "requests_per_minute": 20,
-        "requests_per_day": 5000,
-        "cooldown_seconds": 3,
+    "gemini": {
+        "requests_per_minute": 10,
+        "cooldown_seconds": 6,
     }
 }
 
 # 请求计数器
 request_counter = {
-    "gemini": {"count": 0, "last_reset": datetime.now(), "last_request": None},
-    "claude": {"count": 0, "last_reset": datetime.now(), "last_request": None}
+    "zhipu": {"count": 0, "last_reset": datetime.now(), "last_request": None},
+    "gemini": {"count": 0, "last_reset": datetime.now(), "last_request": None}
 }
 
 
@@ -43,72 +50,19 @@ class RateLimitExceeded(Exception):
     pass
 
 
-def rate_limit(provider: str):
-    """
-    限流装饰器
-
-    Args:
-        provider: "gemini" 或 "claude"
-    """
-    def decorator(func):
-        @wraps(func)
-        async def async_wrapper(*args, **kwargs):
-            await check_rate_limit(provider)
-            return await func(*args, **kwargs)
-
-        @wraps(func)
-        def sync_wrapper(*args, **kwargs):
-            check_rate_limit_sync(provider)
-            return func(*args, **kwargs)
-
-        # 根据函数类型返回对应的 wrapper
-        if asyncio.iscoroutinefunction(func):
-            return async_wrapper
-        return sync_wrapper
-
-    return decorator
-
-
-async def check_rate_limit(provider: str):
-    """异步检查限流"""
-    config = RATE_LIMIT.get(provider, RATE_LIMIT["gemini"])
-    counter = request_counter.get(provider, request_counter["gemini"])
-
-    # 重置每日计数
-    if datetime.now() - counter["last_reset"] > timedelta(days=1):
-        counter["count"] = 0
-        counter["last_reset"] = datetime.now()
-
-    # 检查每日限制
-    if counter["count"] >= config["requests_per_day"]:
-        raise RateLimitExceeded(f"{provider} 每日请求限制已达到")
-
-    # 检查冷却时间
-    if counter["last_request"]:
-        elapsed = (datetime.now() - counter["last_request"]).total_seconds()
-        if elapsed < config["cooldown_seconds"]:
-            wait_time = config["cooldown_seconds"] - elapsed
-            logger.debug(f"等待冷却: {wait_time:.1f}秒")
-            await asyncio.sleep(wait_time)
-
-    # 更新计数器
-    counter["count"] += 1
-    counter["last_request"] = datetime.now()
-
-
 def check_rate_limit_sync(provider: str):
     """同步检查限流"""
-    config = RATE_LIMIT.get(provider, RATE_LIMIT["gemini"])
-    counter = request_counter.get(provider, request_counter["gemini"])
+    config = RATE_LIMIT.get(provider, RATE_LIMIT["zhipu"])
+    counter = request_counter.get(provider, request_counter["zhipu"])
 
-    # 重置每日计数
-    if datetime.now() - counter["last_reset"] > timedelta(days=1):
+    # 重置每分钟计数
+    if datetime.now() - counter["last_reset"] > timedelta(minutes=1):
         counter["count"] = 0
         counter["last_reset"] = datetime.now()
 
-    # 检查每日限制
-    if counter["count"] >= config["requests_per_day"]:
-        raise RateLimitExceeded(f"{provider} 每日请求限制已达到")
+    # 检查每分钟限制
+    if counter["count"] >= config["requests_per_minute"]:
+        raise RateLimitExceeded(f"{provider} 每分钟请求限制已达到")
 
     # 检查冷却时间
     if counter["last_request"]:
@@ -123,7 +77,91 @@ def check_rate_limit_sync(provider: str):
     counter["last_request"] = datetime.now()
 
 
-# ============== Gemini API ==============
+# ============== 智谱 AI (GLM) ==============
+
+zhipu_client = None
+
+
+def init_zhipu():
+    """初始化智谱 AI"""
+    global zhipu_client
+
+    if not ZHIPU_API_KEY:
+        logger.warning("未配置 ZHIPU_API_KEY")
+        return False
+
+    try:
+        from zhipuai import ZhipuAI
+        zhipu_client = ZhipuAI(api_key=ZHIPU_API_KEY)
+        logger.info("智谱 AI 初始化成功")
+        return True
+    except ImportError:
+        logger.error("请安装 zhipuai: pip install zhipuai")
+        return False
+    except Exception as e:
+        logger.error(f"智谱 AI 初始化失败: {e}")
+        return False
+
+
+def analyze_with_zhipu(prompt: str, max_retries: int = 3) -> str:
+    """
+    使用智谱 GLM 分析
+
+    Args:
+        prompt: 分析提示词
+        max_retries: 最大重试次数
+
+    Returns:
+        str: 分析结果，失败返回 None
+    """
+    global zhipu_client
+
+    if not zhipu_client:
+        if not init_zhipu():
+            return None
+
+    for attempt in range(max_retries):
+        try:
+            check_rate_limit_sync("zhipu")
+
+            response = zhipu_client.chat.completions.create(
+                model="glm-4-flash",  # 便宜快速的模型
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=1024,
+            )
+
+            result = response.choices[0].message.content
+            logger.info(f"智谱分析成功 (尝试 {attempt + 1})")
+            return result
+
+        except RateLimitExceeded as e:
+            logger.warning(f"智谱速率限制: {e}")
+            return None
+
+        except Exception as e:
+            error_msg = str(e).lower()
+
+            # 速率限制错误
+            if "rate" in error_msg or "quota" in error_msg or "429" in str(e):
+                wait_time = 10 * (attempt + 1)
+                logger.warning(f"智谱 API 限制，等待 {wait_time} 秒")
+                time.sleep(wait_time)
+                continue
+
+            # 其他错误
+            logger.error(f"智谱调用失败 (尝试 {attempt + 1}/{max_retries}): {e}")
+            if attempt == max_retries - 1:
+                return None
+
+            time.sleep(3)
+
+    return None
+
+
+# ============== Gemini API (备选) ==============
 
 gemini_model = None
 
@@ -147,143 +185,91 @@ def init_gemini():
         return False
 
 
-@rate_limit("gemini")
-def analyze_with_gemini(prompt: str, max_retries: int = 3) -> str:
+def analyze_with_gemini(prompt: str, max_retries: int = 2) -> str:
     """
-    使用 Gemini 分析
-
-    Args:
-        prompt: 分析提示词
-        max_retries: 最大重试次数
+    使用 Gemini 分析 (备选)
 
     Returns:
-        str: 分析结果
+        str: 分析结果，失败返回 None
     """
     global gemini_model
 
     if not gemini_model:
         if not init_gemini():
-            return "Gemini API 未配置"
+            return None
 
     for attempt in range(max_retries):
         try:
+            check_rate_limit_sync("gemini")
             response = gemini_model.generate_content(prompt)
             return response.text
+
+        except RateLimitExceeded:
+            return None
+
         except Exception as e:
             error_msg = str(e).lower()
 
-            # 检查是否是速率限制错误
             if "rate" in error_msg or "quota" in error_msg or "429" in error_msg:
-                wait_time = 30 * (attempt + 1)  # 递增等待时间
-                logger.warning(f"Gemini 速率限制，等待 {wait_time} 秒后重试")
-                time.sleep(wait_time)
-                continue
+                logger.warning(f"Gemini API 限制")
+                return None
 
-            # 其他错误
-            logger.error(f"Gemini 调用失败 (尝试 {attempt + 1}/{max_retries}): {e}")
+            logger.error(f"Gemini 调用失败: {e}")
             if attempt == max_retries - 1:
-                return f"分析失败: {str(e)}"
+                return None
 
             time.sleep(5)
 
-    return "分析失败: 超过最大重试次数"
+    return None
 
 
-# ============== Claude API ==============
+# ============== 统一分析入口 ==============
 
-anthropic_client = None
-
-
-def init_claude():
-    """初始化 Claude"""
-    global anthropic_client
-
-    if not ANTHROPIC_API_KEY:
-        logger.warning("未配置 ANTHROPIC_API_KEY")
-        return False
-
-    try:
-        import anthropic
-        anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        logger.info("Claude 初始化成功")
-        return True
-    except Exception as e:
-        logger.error(f"Claude 初始化失败: {e}")
-        return False
-
-
-@rate_limit("claude")
-def analyze_with_claude(prompt: str, max_retries: int = 3) -> str:
+def analyze(prompt: str, prefer: str = None) -> str:
     """
-    使用 Claude 分析
+    统一 AI 分析入口，自动选择可用的提供商
+
+    优先级:
+    1. 智谱 GLM (如果配置了 ZHIPU_API_KEY)
+    2. Gemini (如果配置了 GEMINI_API_KEY)
+    3. 返回 None (让调用方使用规则分析)
 
     Args:
         prompt: 分析提示词
-        max_retries: 最大重试次数
+        prefer: 优先使用的提供商 (可选)
 
     Returns:
-        str: 分析结果
+        str: 分析结果，如果所有提供商都失败则返回 None
     """
-    global anthropic_client
+    provider = prefer or DEFAULT_PROVIDER
 
-    if not anthropic_client:
-        if not init_claude():
-            return "Claude API 未配置"
-
-    for attempt in range(max_retries):
-        try:
-            message = anthropic_client.messages.create(
-                model="claude-3-5-haiku-20241022",  # 使用较便宜的模型
-                max_tokens=1024,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
-            )
-            return message.content[0].text
-        except Exception as e:
-            error_msg = str(e).lower()
-
-            if "rate" in error_msg or "429" in error_msg:
-                wait_time = 30 * (attempt + 1)
-                logger.warning(f"Claude 速率限制，等待 {wait_time} 秒后重试")
-                time.sleep(wait_time)
-                continue
-
-            logger.error(f"Claude 调用失败 (尝试 {attempt + 1}/{max_retries}): {e}")
-            if attempt == max_retries - 1:
-                return f"分析失败: {str(e)}"
-
-            time.sleep(5)
-
-    return "分析失败: 超过最大重试次数"
-
-
-# ============== 智能路由 ==============
-
-def analyze(prompt: str, prefer: str = "gemini") -> str:
-    """
-    使用 Gemini 分析（不再回退到 Claude）
-
-    Args:
-        prompt: 分析提示词
-        prefer: 保留参数，但只使用 Gemini
-
-    Returns:
-        str: 分析结果
-    """
-    # 只使用 Gemini
-    try:
-        result = analyze_with_gemini(prompt)
-        if not result.startswith("分析失败") and "未配置" not in result:
+    # 尝试主要提供商
+    if provider == "zhipu" and ZHIPU_API_KEY:
+        result = analyze_with_zhipu(prompt)
+        if result:
             return result
-        logger.warning(f"Gemini 分析失败: {result}")
-        return None  # 返回 None 让调用方使用规则分析
-    except RateLimitExceeded as e:
-        logger.warning(f"Gemini 速率限制: {e}")
-        return None
-    except Exception as e:
-        logger.warning(f"Gemini 异常: {e}")
-        return None
+        logger.info("智谱分析失败，尝试备选...")
+
+    elif provider == "gemini" and GEMINI_API_KEY:
+        result = analyze_with_gemini(prompt)
+        if result:
+            return result
+        logger.info("Gemini 分析失败，尝试备选...")
+
+    # 尝试备选提供商
+    if provider != "zhipu" and ZHIPU_API_KEY:
+        result = analyze_with_zhipu(prompt)
+        if result:
+            return result
+
+    if provider != "gemini" and GEMINI_API_KEY:
+        result = analyze_with_gemini(prompt)
+        if result:
+            return result
+
+    # 所有提供商都失败
+    logger.warning("所有 AI 提供商都不可用，将使用规则分析")
+    return None
 
 
 # ============== 专用分析函数 ==============
@@ -291,36 +277,27 @@ def analyze(prompt: str, prefer: str = "gemini") -> str:
 def analyze_market_breadth(data: dict) -> str:
     """
     分析市场宽度数据
-
-    Args:
-        data: Market Monitor 数据
-
-    Returns:
-        str: 分析结果
     """
     if not data or not data.get("latest"):
         return "无数据可分析"
 
     latest = data["latest"]
 
-    # 获取数值
-    up_4pct = latest.get('up_4pct', 0)
-    down_4pct = latest.get('down_4pct', 0)
-    ratio_5d = latest.get('ratio_5d', 1.0)
-    ratio_10d = latest.get('ratio_10d', 1.0)
-    up_25pct_qtr = latest.get('up_25pct_qtr', 0)
-    down_25pct_qtr = latest.get('down_25pct_qtr', 0)
+    # 安全获取数值
+    def safe_num(val, default=0, is_float=False):
+        if val in [None, 'N/A', '', 'null']:
+            return default
+        try:
+            return float(val) if is_float else int(val)
+        except (ValueError, TypeError):
+            return default
 
-    # 尝试转换为数字
-    try:
-        up_4pct = int(up_4pct) if up_4pct != 'N/A' else 0
-        down_4pct = int(down_4pct) if down_4pct != 'N/A' else 0
-        ratio_5d = float(ratio_5d) if ratio_5d != 'N/A' else 1.0
-        ratio_10d = float(ratio_10d) if ratio_10d != 'N/A' else 1.0
-        up_25pct_qtr = int(up_25pct_qtr) if up_25pct_qtr != 'N/A' else 0
-        down_25pct_qtr = int(down_25pct_qtr) if down_25pct_qtr != 'N/A' else 0
-    except (ValueError, TypeError):
-        pass
+    up_4pct = safe_num(latest.get('up_4pct'), 0)
+    down_4pct = safe_num(latest.get('down_4pct'), 0)
+    ratio_5d = safe_num(latest.get('ratio_5d'), 1.0, is_float=True)
+    ratio_10d = safe_num(latest.get('ratio_10d'), 1.0, is_float=True)
+    up_25pct_qtr = safe_num(latest.get('up_25pct_qtr'), 0)
+    down_25pct_qtr = safe_num(latest.get('down_25pct_qtr'), 0)
 
     prompt = f"""分析美股市场宽度数据，直接输出结论，不要开场白：
 
@@ -344,209 +321,138 @@ def analyze_market_breadth(data: dict) -> str:
 4. 建议：观望 - 短期市场偏弱，不建议追高，等待企稳信号，控制仓位"""
 
     # 尝试 AI 分析
-    ai_result = analyze(prompt, prefer="gemini")
+    ai_result = analyze(prompt)
 
-    # 如果 AI 成功，返回结果
     if ai_result:
         return ai_result
 
     # AI 失败，使用规则分析
-    logger.info("AI 不可用，使用规则分析")
-    analysis_parts = []
+    return rule_based_market_analysis(up_4pct, down_4pct, ratio_5d, ratio_10d, up_25pct_qtr, down_25pct_qtr)
 
-    # 1. 短期强弱判断
+
+def rule_based_market_analysis(up_4pct, down_4pct, ratio_5d, ratio_10d, up_25pct_qtr, down_25pct_qtr) -> str:
+    """规则分析 Market Monitor"""
+    parts = []
+
+    # 1. 短期判断
     if up_4pct > down_4pct * 1.5:
-        analysis_parts.append(f"📈 短期偏强：大涨股({up_4pct})明显多于大跌股({down_4pct})")
+        parts.append(f"1. 短期：偏强 - 涨4%+({up_4pct})明显多于跌4%+({down_4pct})")
     elif down_4pct > up_4pct * 1.5:
-        analysis_parts.append(f"📉 短期偏弱：大跌股({down_4pct})明显多于大涨股({up_4pct})")
+        parts.append(f"1. 短期：偏弱 - 跌4%+({down_4pct})明显多于涨4%+({up_4pct})，5日比{ratio_5d}小于1")
     else:
-        analysis_parts.append(f"⚖️ 短期震荡：涨跌接近（涨{up_4pct}/跌{down_4pct}）")
+        parts.append(f"1. 短期：震荡 - 涨跌接近（涨{up_4pct}/跌{down_4pct}）")
 
-    # 2. 中期判断（季度数据）
-    if up_25pct_qtr > down_25pct_qtr * 1.5:
-        analysis_parts.append(f"📈 中期偏强：季度大涨股({up_25pct_qtr})远多于大跌股({down_25pct_qtr})")
-    elif down_25pct_qtr > up_25pct_qtr * 1.5:
-        analysis_parts.append(f"📉 中期偏弱：季度大跌股({down_25pct_qtr})远多于大涨股({up_25pct_qtr})")
+    # 2. 中期判断
+    if up_25pct_qtr > down_25pct_qtr:
+        parts.append(f"2. 中期：偏强 - 季度上涨个股({up_25pct_qtr})多于下跌({down_25pct_qtr})")
     else:
-        analysis_parts.append(f"⚖️ 中期震荡：季度涨跌接近（涨{up_25pct_qtr}/跌{down_25pct_qtr}）")
+        parts.append(f"2. 中期：偏弱 - 季度下跌个股({down_25pct_qtr})多于上涨({up_25pct_qtr})")
 
-    # 3. 极端信号（重要！）
-    # 最重要：季度涨25%+ < 350 = 底部信号
+    # 3. 极端信号
     if up_25pct_qtr < 350 and up_25pct_qtr > 0:
-        analysis_parts.append(f"🚨 重要信号：季度涨25%+仅{up_25pct_qtr}只(<350)，大概率处于底部区域，可考虑更积极")
-
-    # 过热信号：日涨4%+ > 1000 且 5日比 > 2
-    if up_4pct > 1000 and ratio_5d > 2:
-        analysis_parts.append(f"⚠️ 过热警告：日涨4%+达{up_4pct}只(>1000)且5日比{ratio_5d}(>2)，注意止盈防回调")
-    elif up_4pct > 1000:
-        analysis_parts.append(f"⚠️ 注意：日涨4%+达{up_4pct}只(>1000)，短期可能过热")
-
-    # 恐慌信号
-    if down_4pct > 500:
-        analysis_parts.append(f"⚠️ 恐慌信号：大跌股{down_4pct}只(>500)，可能接近短期底部")
-
-    # 4. 操作建议（具体可操作）
-    if up_25pct_qtr < 350 and up_25pct_qtr > 0:
-        analysis_parts.append("💡 建议：中期底部区域，可逢低分批布局强势股，关注反转信号确认")
+        parts.append(f"3. 信号：底部信号 - 季度涨25%+仅{up_25pct_qtr}只(<350)")
     elif up_4pct > 1000 and ratio_5d > 2:
-        analysis_parts.append("💡 建议：短期过热，考虑部分止盈锁定利润，提高止损位保护收益")
-    elif ratio_5d > 1.2 and up_4pct > down_4pct:
-        analysis_parts.append("💡 建议：趋势向上，可适度加仓强势股，但控制单笔风险在2%以内")
-    elif ratio_5d < 0.8 and down_4pct > up_4pct:
-        analysis_parts.append("💡 建议：趋势向下，减少敞口或观望，等待企稳信号再考虑入场")
+        parts.append(f"3. 信号：过热警告 - 日涨4%+达{up_4pct}且5日比{ratio_5d}>2")
     else:
-        analysis_parts.append("💡 建议：观望，不建议大幅增加仓位，关注RR(风险回报比)，保持交易纪律")
+        parts.append("3. 信号：无极端信号")
 
-    return "\n".join(analysis_parts)
+    # 4. 建议
+    if ratio_5d < 1 and down_4pct > up_4pct:
+        parts.append("4. 建议：观望 - 短期市场偏弱，不建议追高，等待企稳信号，控制仓位")
+    elif ratio_5d > 1.2:
+        parts.append("4. 建议：积极 - 可适度加仓强势股，但控制单笔风险")
+    else:
+        parts.append("4. 建议：谨慎 - 保持观察，关注风险回报比")
+
+    return "\n".join(parts)
 
 
 def analyze_momentum_stocks(data: dict, include_descriptions: bool = True) -> str:
     """
     分析 Momentum 50 数据
-
-    Args:
-        data: Momentum 50 数据
-        include_descriptions: 是否包含股票简介
-
-    Returns:
-        str: 分析结果
     """
     if not data:
         return "无数据可分析"
 
-    all_tickers = data.get("tickers", [])
-    top_20 = all_tickers[:20]
+    tickers = data.get("tickers", [])[:20]
     new_entries = data.get("new_entries", [])
+    dropped = data.get("dropped", [])
 
-    # 全部新进入标的，只有前20的才标排名
-    new_with_rank = []
-    for t in new_entries:
-        if t in top_20:
-            rank = all_tickers.index(t) + 1
-            new_with_rank.append(f"{t}(#{rank})")
-        else:
-            new_with_rank.append(t)
-    new_list_str = ", ".join(new_with_rank) if new_with_rank else "无"
+    ticker_list = ", ".join(tickers)
+    new_list = ", ".join(new_entries[:10]) if new_entries else "无"
+    dropped_list = ", ".join(dropped[:10]) if dropped else "无"
 
-    prompt = f"""分析 Momentum 50 榜单（直接输出，不要说"好的"）：
+    prompt = f"""你是专业的美股动量交易分析师。分析以下 Momentum 50 榜单：
 
 日期: {data.get('latest_date', 'N/A')}
-全部50只标的（用于行业统计）: {', '.join(all_tickers)}
-新进入标的: {new_list_str}
+榜单前20: {ticker_list}
+今日新进入: {new_list}
+今日掉出: {dropped_list}
 
-请输出：
+请提供简洁分析（适合手机阅读）：
+1. 行业分布：哪些板块占主导（1-2句）
+2. 新进标的点评：每个新进标的一句话（公司简介+关注点）
+   格式: TICKER：[公司简介10字]。关注点：[看点]
 
-1. 行业分布：
-一句话统计全部50只的行业分布，如"科技股XX只(XX%)，医药XX只(XX%)..."
-
-2. 新进标的点评：
-点评所有新进入的标的，格式：
-TICKER：简介(10字内)。关注点。
-TICKER(#排名)：简介(10字内)。关注点。（进入前20的标注排名）
-
-要求简洁，不要输出注意事项。"""
+要求：
+- 如果不了解某只股票，写"未知"即可，不要编造
+- 直接输出，不要开场白"""
 
     # 尝试 AI 分析
-    ai_result = analyze(prompt, prefer="gemini")
+    ai_result = analyze(prompt)
 
-    # 如果 AI 成功，返回结果
     if ai_result:
         return ai_result
 
     # AI 失败，使用规则分析
-    logger.info("AI 不可用，使用规则分析 Momentum 50")
     return rule_based_momentum_analysis(data)
 
 
 def rule_based_momentum_analysis(data: dict) -> str:
-    """
-    基于规则的 Momentum 50 分析（AI 不可用时的备用方案）
-
-    Args:
-        data: Momentum 50 数据
-
-    Returns:
-        str: 规则分析结果
-    """
-    analysis_parts = []
+    """规则分析 Momentum 50"""
+    parts = []
 
     tickers = data.get("tickers", [])
     new_entries = data.get("new_entries", [])
     dropped = data.get("dropped", [])
-    latest_date = data.get("latest_date", "N/A")
 
-    # 1. 基本信息
-    analysis_parts.append(f"📅 榜单日期: {latest_date}")
-    analysis_parts.append(f"📊 当前榜单股票数: {len(tickers)}")
-
-    # 2. 换手率分析
+    # 换手率
     if tickers:
-        turnover_rate = len(new_entries) / len(tickers) * 100 if tickers else 0
-        if turnover_rate > 20:
-            analysis_parts.append(f"🔄 换手率较高 ({turnover_rate:.1f}%)，市场热点可能在切换")
-        elif turnover_rate > 10:
-            analysis_parts.append(f"🔄 换手率适中 ({turnover_rate:.1f}%)，热点相对稳定")
+        turnover = len(new_entries) / len(tickers) * 100
+        if turnover > 20:
+            parts.append(f"1. 行业分布：换手率较高({turnover:.0f}%)，市场热点可能在切换")
         else:
-            analysis_parts.append(f"🔄 换手率较低 ({turnover_rate:.1f}%)，领涨股票稳定")
+            parts.append(f"1. 行业分布：换手率{turnover:.0f}%，热点相对稳定")
 
-    # 3. 新进入标的
+    # 新进标的
+    parts.append("\n2. 新进标的点评：")
     if new_entries:
-        analysis_parts.append(f"\n🆕 新进入榜单 ({len(new_entries)}只):")
-        for ticker in new_entries[:5]:
-            analysis_parts.append(f"  • {ticker}")
-        if len(new_entries) > 5:
-            analysis_parts.append(f"  ...及其他 {len(new_entries) - 5} 只")
+        for ticker in new_entries[:10]:
+            parts.append(f"{ticker}：需要进一步研究。关注点：新进榜单，关注突破形态")
     else:
-        analysis_parts.append("\n🆕 今日无新进入标的")
+        parts.append("今日无新进入标的")
 
-    # 4. 掉出标的
-    if dropped:
-        analysis_parts.append(f"\n📉 掉出榜单 ({len(dropped)}只): {', '.join(dropped[:5])}")
-        if len(dropped) > 5:
-            analysis_parts.append(f"...及其他 {len(dropped) - 5} 只")
-
-    # 5. Top 10 展示
-    top_10 = tickers[:10]
-    if top_10:
-        analysis_parts.append(f"\n🏆 Top 10: {', '.join(top_10)}")
-
-    # 6. 简单建议
-    analysis_parts.append("\n💡 建议:")
+    # 建议
+    parts.append("\n3. 建议：")
     if len(new_entries) > 10:
-        analysis_parts.append("  • 新进入标的较多，关注新热点，但注意追高风险")
-    elif len(new_entries) == 0:
-        analysis_parts.append("  • 榜单稳定，可关注持续在榜的领涨股")
+        parts.append("- 新进标的较多，关注新热点但注意追高风险")
     else:
-        analysis_parts.append("  • 关注新进入标的的突破形态")
+        parts.append("- 关注持续在榜的领涨股")
+    parts.append("- 结合量价分析，设置止损控制风险")
 
-    analysis_parts.append("  • 结合量价分析确认动量强度")
-    analysis_parts.append("  • 注意设置止损，控制单笔风险")
-
-    return "\n".join(analysis_parts)
+    return "\n".join(parts)
 
 
 def get_ticker_descriptions(tickers: list) -> dict:
     """
     批量获取股票简介
-
-    Args:
-        tickers: 股票代码列表
-
-    Returns:
-        dict: {ticker: description}
     """
     if not tickers:
         return {}
 
-    # 分批处理，每批10个
-    batch_size = 10
-    all_descriptions = {}
+    ticker_list = ", ".join(tickers[:15])
 
-    for i in range(0, len(tickers), batch_size):
-        batch = tickers[i:i + batch_size]
-        ticker_list = ", ".join(batch)
-
-        prompt = f"""请为以下美股标的提供简短介绍（每个10-15字，只写主营业务）：
+    prompt = f"""请为以下美股标的提供简短介绍（每个10-15字，只写主营业务）：
 
 {ticker_list}
 
@@ -557,40 +463,51 @@ TICKER: 简介
 AAPL: iPhone及消费电子巨头
 NVDA: AI芯片龙头，GPU领导者
 
+如果不了解某只股票，写 "TICKER: 未知" 即可。
 只输出格式化结果，不要其他内容。"""
 
-        result = analyze(prompt, prefer="gemini")
+    result = analyze(prompt)
 
-        # 解析结果（检查 None）
-        if result:
-            for line in result.strip().split('\n'):
-                if ':' in line:
-                    parts = line.split(':', 1)
-                    ticker = parts[0].strip().upper()
-                    desc = parts[1].strip() if len(parts) > 1 else ""
-                    if ticker in batch:
-                        all_descriptions[ticker] = desc
+    descriptions = {}
+    if result:
+        for line in result.strip().split('\n'):
+            if ':' in line:
+                parts = line.split(':', 1)
+                ticker = parts[0].strip().upper()
+                desc = parts[1].strip() if len(parts) > 1 else "未知"
+                if ticker in [t.upper() for t in tickers]:
+                    descriptions[ticker] = desc
 
-        # 批次间等待
-        if i + batch_size < len(tickers):
-            time.sleep(2)
+    # 填充未获取到的
+    for ticker in tickers:
+        if ticker.upper() not in descriptions:
+            descriptions[ticker.upper()] = "未知"
 
-    return all_descriptions
+    return descriptions
 
+
+# ============== 测试 ==============
 
 if __name__ == "__main__":
-    # 测试
     logging.basicConfig(level=logging.INFO)
 
-    # 测试 Gemini
-    print("测试 Gemini...")
-    result = analyze("用一句话解释什么是市场宽度指标", prefer="gemini")
-    print(f"结果: {result[:200]}...")
+    print("=" * 50)
+    print("AI Analyzer 测试")
+    print("=" * 50)
 
-    # 测试限流
-    print("\n测试限流...")
-    for i in range(3):
-        start = time.time()
-        result = analyze("测试", prefer="gemini")
-        elapsed = time.time() - start
-        print(f"请求 {i + 1}: {elapsed:.1f}秒")
+    # 检查配置
+    print(f"\n配置状态:")
+    print(f"  - 智谱 API Key: {'已配置' if ZHIPU_API_KEY else '未配置'}")
+    print(f"  - Gemini API Key: {'已配置' if GEMINI_API_KEY else '未配置'}")
+    print(f"  - 默认提供商: {DEFAULT_PROVIDER}")
+
+    # 测试分析
+    if ZHIPU_API_KEY or GEMINI_API_KEY:
+        print("\n测试 AI 分析...")
+        result = analyze("用一句话解释什么是市场宽度指标")
+        if result:
+            print(f"结果: {result[:200]}...")
+        else:
+            print("AI 分析失败，将使用规则分析")
+    else:
+        print("\n未配置任何 API Key，将使用规则分析")
