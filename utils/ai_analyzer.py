@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 AI Analyzer - 支持多个大模型提供商
-优先使用智谱 GLM，备选 Gemini
+优先使用 Gemini，备选智谱 GLM
 
 支持的提供商:
-- 智谱 AI (GLM-4-Flash) - 推荐，便宜且稳定
-- Google Gemini (备选)
+- Google Gemini (推荐，分析质量更好)
+- 智谱 AI (GLM-4-Flash) (备选，便宜稳定)
 """
 
 import os
@@ -24,7 +24,7 @@ ZHIPU_API_KEY = os.getenv('ZHIPU_API_KEY')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
 # 默认提供商优先级
-DEFAULT_PROVIDER = os.getenv('AI_PROVIDER', 'zhipu')  # zhipu 或 gemini
+DEFAULT_PROVIDER = os.getenv('AI_PROVIDER', 'gemini')  # gemini 或 zhipu
 
 # ============== 限流配置 ==============
 RATE_LIMIT = {
@@ -230,8 +230,8 @@ def analyze(prompt: str, prefer: str = None) -> str:
     统一 AI 分析入口，自动选择可用的提供商
 
     优先级:
-    1. 智谱 GLM (如果配置了 ZHIPU_API_KEY)
-    2. Gemini (如果配置了 GEMINI_API_KEY)
+    1. Gemini (如果配置了 GEMINI_API_KEY)
+    2. 智谱 GLM (如果配置了 ZHIPU_API_KEY)
     3. 返回 None (让调用方使用规则分析)
 
     Args:
